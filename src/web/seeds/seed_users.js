@@ -201,10 +201,16 @@ const clients = [
 // ─── Helpers ─────────────────────────────────────────────────
 
 let employeeCounter = 0;
+let adminCounter = 0;
 
-function generateEmployeeId() {
-  employeeCounter++;
-  return `PG-${String(employeeCounter).padStart(4, '0')}`;
+function generateEmployeeId(role) {
+  if (role === 'admin') {
+    adminCounter++;
+    return `AD-${String(adminCounter).padStart(5, '0')}`;
+  } else {
+    employeeCounter++;
+    return `PG-${String(employeeCounter).padStart(5, '0')}`;
+  }
 }
 
 async function createAuthUser(email, password) {
@@ -242,6 +248,17 @@ async function seed() {
   for (const admin of admins) {
     const id = await createAuthUser(admin.contact_email, DEFAULT_PASSWORD);
     await insertProfile(id, admin);
+
+    const { error } = await supabase.from('employees').insert({
+      id,
+      employee_id_number: generateEmployeeId('admin'),
+      position: admin.position,
+      hire_date: new Date().toISOString().split('T')[0],
+      base_salary: null,
+      pay_frequency: null,
+    });
+
+    if (error) throw new Error(`Employee insert failed for ${admin.contact_email}: ${error.message}`);
     console.log(`   ✓ ${admin.position}: ${admin.first_name} ${admin.last_name}`);
   }
 
@@ -253,7 +270,7 @@ async function seed() {
 
     const { error } = await supabase.from('employees').insert({
       id,
-      employee_id_number: generateEmployeeId(),
+      employee_id_number: generateEmployeeId('employee'),
       position: emp.position,
       hire_date: new Date().toISOString().split('T')[0],
       base_salary: emp.base_salary,
