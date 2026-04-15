@@ -11,7 +11,7 @@ async function getProfile(req, res) {
     // Fetch comprehensive profile data
     const { data: profile, error } = await supabaseAdmin
       .from('profiles')
-      .select('first_name, last_name, contact_email, phone_number, role, avatar_url, status, employees(position, employee_id_number, hire_date)')
+      .select('first_name, middle_name, last_name, contact_email, phone_number, role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
       .eq('id', userId)
       .single();
 
@@ -20,10 +20,14 @@ async function getProfile(req, res) {
     }
 
     const emp = profile.employees?.[0] || profile.employees || {};
+    const client = profile.clients?.[0] || profile.clients || {};
     delete profile.employees;
+    delete profile.clients;
     profile.position = emp.position || null;
     profile.employee_id_number = emp.employee_id_number || null;
     profile.hire_date = emp.hire_date || null;
+    profile.company = client.company || null;
+    profile.billing_address = client.billing_address || null;
 
     return res.json(profile);
   } catch (err) {

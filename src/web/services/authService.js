@@ -31,7 +31,7 @@ async function login(email, password) {
   // 2. Fetch the user's profile (role, name, avatar, etc.)
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
-    .select('first_name, last_name, role, avatar_url, status, employees(position, employee_id_number, hire_date)')
+    .select('first_name, middle_name, last_name, role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
     .eq('id', user.id)
     .single();
 
@@ -60,6 +60,7 @@ async function login(email, password) {
 
   // Position logic handling 1-to-X relation
   const emp = profile.employees?.[0] || profile.employees || {};
+  const client = profile.clients?.[0] || profile.clients || {};
 
   return {
     user: { id: user.id, email: user.email },
@@ -69,12 +70,15 @@ async function login(email, password) {
     },
     profile: {
       first_name: profile.first_name,
+      middle_name: profile.middle_name,
       last_name: profile.last_name,
       role: profile.role,
       avatar_url: profile.avatar_url,
       position: emp.position || null,
       employee_id_number: emp.employee_id_number || null,
       hire_date: emp.hire_date || null,
+      company: client.company || null,
+      billing_address: client.billing_address || null,
     },
     redirect,
   };
@@ -101,7 +105,7 @@ async function getMe(accessToken) {
   // Fetch profile
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
-    .select('first_name, last_name, role, avatar_url, status, employees(position, employee_id_number, hire_date)')
+    .select('first_name, middle_name, last_name, role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
     .eq('id', user.id)
     .single();
 
@@ -126,17 +130,21 @@ async function getMe(accessToken) {
   const redirect = profile.role === 'admin' ? '/dashboard' : '/cms/dashboard';
 
   const emp = profile.employees?.[0] || profile.employees || {};
+  const client = profile.clients?.[0] || profile.clients || {};
 
   return {
     user: { id: user.id, email: user.email },
     profile: {
       first_name: profile.first_name,
+      middle_name: profile.middle_name,
       last_name: profile.last_name,
       role: profile.role,
       avatar_url: profile.avatar_url,
       position: emp.position || null,
       employee_id_number: emp.employee_id_number || null,
       hire_date: emp.hire_date || null,
+      company: client.company || null,
+      billing_address: client.billing_address || null,
     },
     redirect,
   };
