@@ -1,11 +1,16 @@
 const { supabaseAdmin } = require('../../supabaseClient');
+const { getPaginationRange } = require('../utils/pagination');
 
 /**
- * Fetch all employees and format their list data.
- * @returns {Array} List of formatted employees
+ * Fetch a paginated list of employees.
+ * @param {number} page - Current page (1-indexed)
+ * @param {number} limit - Items per page
+ * @returns {Object} { employees: Array, totalCount: number }
  */
-async function getAllEmployees() {
-  const { data: profiles, error } = await supabaseAdmin
+async function getAllEmployees(page = 1, limit = 6) {
+  const { from, to } = getPaginationRange(page, limit);
+
+  const { data: profiles, error, count } = await supabaseAdmin
     .from('profiles')
     .select(`
       id,
@@ -27,8 +32,9 @@ async function getAllEmployees() {
           )
         )
       )
-    `)
-    .eq('role', 'employee');
+    `, { count: 'exact' })
+    .eq('role', 'employee')
+    .range(from, to);
 
   if (error) {
     const err = new Error(error.message);
@@ -36,7 +42,7 @@ async function getAllEmployees() {
     throw err;
   }
 
-  return profiles.map(p => {
+  const formatted = profiles.map(p => {
     const emp = Array.isArray(p.employees) ? p.employees[0] : (p.employees || {});
     
     let deployments = [];
@@ -72,6 +78,11 @@ async function getAllEmployees() {
       tenure: tenure
     };
   });
+
+  return {
+    employees: formatted,
+    totalCount: count || 0
+  };
 }
 
 /**

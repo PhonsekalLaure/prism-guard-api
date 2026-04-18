@@ -1,12 +1,16 @@
 const employeeService = require('../services/employeeService');
+const { formatPaginatedResponse } = require('../utils/pagination');
 
 /**
  * GET /api/web/employees
  */
 async function getAllEmployees(req, res) {
   try {
-    const employees = await employeeService.getAllEmployees();
-    return res.json(employees);
+    const { page, limit } = req.pagination;
+    
+    const { employees, totalCount } = await employeeService.getAllEmployees(page, limit);
+    
+    return res.json(formatPaginatedResponse(employees, totalCount, page, limit));
   } catch (err) {
     const status = err.status || 500;
     return res.status(status).json({ error: err.message });
