@@ -241,7 +241,48 @@ async function getEmployeeDetails(id) {
   };
 }
 
+/**
+ * Fetch statistics for the Employees Dashboard
+ * @returns {Object} Stats: total, active, on_leave, absent_today, active_on_duty
+ */
+async function getEmployeeStats() {
+  const today = new Date().toISOString().split('T')[0];
+
+  // 1. Get counts from profiles table
+  const { data: statusCounts, error: statusError } = await supabaseAdmin
+    .from('profiles')
+    .select('status')
+    .eq('role', 'employee');
+
+  if (statusError) throw statusError;
+
+  const stats = {
+    total: statusCounts.length,
+    active: statusCounts.filter(p => p.status === 'active').length,
+    on_leave: statusCounts.filter(p => p.status === 'on-leave').length,
+    suspended: statusCounts.filter(p => p.status === 'suspended').length,
+  };
+
+  // 2. Get today's attendance stats
+  const { data: attendanceToday, error: attendanceError } = await supabaseAdmin
+    .from('attendance_logs')
+    .select('employee_id, status')
+    .eq('log_date', today);
+
+  if (attendanceError) throw attendanceError;
+
+  const clockInCount = new Set(attendanceToday.map(a => a.employee_id)).size;
+  
+  return {
+    totalEmployees: stats.total,
+    onLeave: stats.on_leave,
+    absentToday: stats.total - stats.active - stats.on_leave, // Simplification: anyone not active or on-leave
+    activeOnDuty: clockInCount, // Actual clock-ins today
+  };
+}
+
 module.exports = {
   getAllEmployees,
-  getEmployeeDetails
+  getEmployeeDetails,
+  getEmployeeStats
 };

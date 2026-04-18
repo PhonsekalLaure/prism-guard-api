@@ -24,8 +24,21 @@ async function getAllEmployees(req, res) {
 async function getEmployeeDetails(req, res) {
   try {
     const { id } = req.params;
-    const employeeDetails = await employeeService.getEmployeeDetails(id);
-    return res.json(employeeDetails);
+    const employee = await employeeService.getEmployeeDetails(id);
+    return res.json(employee);
+  } catch (err) {
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message });
+  }
+}
+
+/**
+ * GET /api/web/employees/stats
+ */
+async function getEmployeeStats(req, res) {
+  try {
+    const stats = await employeeService.getEmployeeStats();
+    return res.json(stats);
   } catch (err) {
     const status = err.status || 500;
     return res.status(status).json({ error: err.message });
@@ -34,5 +47,6 @@ async function getEmployeeDetails(req, res) {
 
 module.exports = {
   getAllEmployees,
-  getEmployeeDetails
+  getEmployeeDetails,
+  getEmployeeStats
 };
