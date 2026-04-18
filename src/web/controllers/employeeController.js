@@ -7,8 +7,9 @@ const { formatPaginatedResponse } = require('../utils/pagination');
 async function getAllEmployees(req, res) {
   try {
     const { page, limit } = req.pagination;
+    const filters = req.filters;
     
-    const { employees, totalCount } = await employeeService.getAllEmployees(page, limit);
+    const { employees, totalCount } = await employeeService.getAllEmployees(page, limit, filters);
     
     return res.json(formatPaginatedResponse(employees, totalCount, page, limit));
   } catch (err) {

@@ -1,16 +1,20 @@
 const { supabaseAdmin } = require('../../supabaseClient');
 const { getPaginationRange } = require('../utils/pagination');
+const { applySupabaseFilters, isClientFilterActive } = require('../utils/supabaseFilters');
 
 /**
- * Fetch a paginated list of employees.
+ * Fetch a paginated list of employees with optional filters.
  * @param {number} page - Current page (1-indexed)
  * @param {number} limit - Items per page
+ * @param {Object} filters - Search and status filters
  * @returns {Object} { employees: Array, totalCount: number }
  */
-async function getAllEmployees(page = 1, limit = 6) {
+async function getAllEmployees(page = 1, limit = 6, filters = null) {
   const { from, to } = getPaginationRange(page, limit);
+  const useInner = isClientFilterActive(filters);
 
-  const { data: profiles, error, count } = await supabaseAdmin
+  // Use !inner if we are filtering by client to only return matching rows
+  let query = supabaseAdmin
     .from('profiles')
     .select(`
       id,
@@ -18,14 +22,15 @@ async function getAllEmployees(page = 1, limit = 6) {
       last_name,
       status,
       avatar_url,
-      employees (
+      employees${useInner ? '!inner' : ''} (
         employee_id_number,
         position,
         hire_date,
-        deployments!deployments_employee_id_fkey (
+        deployments!deployments_employee_id_fkey${useInner ? '!inner' : ''} (
           status,
-          client_sites (
+          client_sites!inner (
             site_name,
+            client_id,
             clients (
               company
             )
@@ -46,7 +51,8 @@ async function getAllEmployees(page = 1, limit = 6) {
     throw err;
   }
 
-  const formatted = profiles.map(p => {
+  const profileData = profiles || [];
+  const formatted = profileData.map(p => {
     const emp = Array.isArray(p.employees) ? p.employees[0] : (p.employees || {});
     
     let deployments = [];
