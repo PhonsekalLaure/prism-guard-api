@@ -5,6 +5,7 @@ const cors = require('cors');
 const authRoutes = require('./web/routes/authRoutes');
 const profileRoutes = require('./web/routes/profileRoutes');
 const employeeRoutes = require('./web/routes/employeeRoutes');
+const clientRoutes = require('./web/routes/clientRoutes');
 
 const app = express();
 
@@ -23,6 +24,7 @@ app.get('/', (req, res) => {
 app.use('/api/web/auth', authRoutes);
 app.use('/api/web/profile', profileRoutes);
 app.use('/api/web/employees', employeeRoutes);
+app.use('/api/web/clients', clientRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
