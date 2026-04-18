@@ -33,8 +33,12 @@ async function getAllEmployees(page = 1, limit = 6) {
         )
       )
     `, { count: 'exact' })
-    .eq('role', 'employee')
-    .range(from, to);
+    .eq('role', 'employee');
+
+  // Apply shared filters
+  query = applySupabaseFilters(query, filters);
+
+  const { data: profiles, error, count } = await query.range(from, to);
 
   if (error) {
     const err = new Error(error.message);
