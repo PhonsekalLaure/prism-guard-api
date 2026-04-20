@@ -34,6 +34,9 @@ create table public.employees (
   residential_address text null,
   emergency_contact_name text null,
   emergency_contact_number text null,
+  employment_type text null default 'Regular'::text,
+  latitude double precision null,
+  longitude double precision null,
   constraint employees_pkey primary key (id),
   constraint employees_employee_id_number_key unique (employee_id_number),
   constraint employees_id_fkey foreign KEY (id) references profiles (id) on delete CASCADE
