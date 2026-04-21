@@ -5,7 +5,11 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "db:reset": "node src/web/seeds/reset_db.js",
+    "db:seed": "node src/web/seeds/seed_users.js",
+    "db:deploy": "node src/web/seeds/seed_deployments.js",
+    "db:setup": "npm run db:reset && npm run db:seed && npm run db:deploy"
   },
   "keywords": [],
   "author": "",
@@ -13,11 +17,27 @@
   "type": "commonjs",
   "dependencies": {
     "@supabase/supabase-js": "^2.99.3",
+    "cloudinary": "^2.9.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "module-alias": "^2.2.3",
+    "multer": "^2.1.1",
+    "nodemailer": "^8.0.5",
+    "streamifier": "^0.1.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"
+  },
+  "_moduleAliases": {
+    "@controllers": "./src/web/controllers",
+    "@services": "./src/web/services",
+    "@middlewares": "./src/web/middlewares",
+    "@routes": "./src/web/routes",
+    "@models": "./src/web/models",
+    "@utils": "./src/web/utils",
+    "@shared": "./src/utils",
+    "@config": "./src/config",
+    "@src": "./src"
   }
 }

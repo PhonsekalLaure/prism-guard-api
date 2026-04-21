@@ -1,11 +1,12 @@
+require('module-alias/register');
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
-const authRoutes = require('./web/routes/authRoutes');
-const profileRoutes = require('./web/routes/profileRoutes');
-const employeeRoutes = require('./web/routes/employeeRoutes');
-const clientRoutes = require('./web/routes/clientRoutes');
+const authRoutes = require('@routes/authRoutes');
+const profileRoutes = require('@routes/profileRoutes');
+const employeeRoutes = require('@routes/employeeRoutes');
+const clientRoutes = require('@routes/clientRoutes');
 
 const app = express();
 

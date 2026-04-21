@@ -1,4 +1,4 @@
-const { supabaseAdmin } = require('../../supabaseClient');
+const { supabaseAdmin } = require('@src/supabaseClient');
 
 /**
  * GET /api/web/profile/me

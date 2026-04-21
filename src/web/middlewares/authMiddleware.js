@@ -1,4 +1,4 @@
-const { supabase, supabaseAdmin } = require('../../supabaseClient');
+const { supabase, supabaseAdmin } = require('@src/supabaseClient');
 
 /**
  * Middleware: requireAuth

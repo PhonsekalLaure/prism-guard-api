@@ -1,4 +1,4 @@
-const clientService = require('../services/clientService');
+const clientService = require('@services/clientService');
 
 /**
  * GET /api/web/clients

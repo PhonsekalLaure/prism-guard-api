@@ -1,4 +1,4 @@
-const { supabaseAdmin } = require('../../supabaseClient');
+const { supabaseAdmin } = require('@src/supabaseClient');
 
 /**
  * Fetch a list of active clients for dropdowns and filters.
