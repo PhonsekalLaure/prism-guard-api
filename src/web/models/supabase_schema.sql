@@ -1,3 +1,6 @@
+user_role = [admin, employee, client]
+user_status = [active, inactive, terminated, archived]
+
 create table public.profiles (
   id uuid not null,
   first_name text not null,
@@ -10,7 +13,9 @@ create table public.profiles (
   avatar_url text null,
   middle_name text null,
   deleted_at timestamp with time zone null,
+  suffix text null,
   constraint profiles_pkey primary key (id),
+  constraint profiles_contact_email_key unique (contact_email),
   constraint profiles_id_fkey foreign KEY (id) references auth.users (id)
 ) TABLESPACE pg_default;
 
@@ -52,6 +57,7 @@ create table public.clearances (
   status text null default 'valid'::text,
   created_at timestamp with time zone null default now(),
   constraint clearances_pkey primary key (id),
+  constraint clearances_employee_clearance_type_unique unique (employee_id, clearance_type),
   constraint clearances_employee_id_fkey foreign KEY (employee_id) references employees (id) on delete CASCADE
 ) TABLESPACE pg_default;
 
