@@ -1,6 +1,6 @@
-const { supabaseAdmin } = require('../../supabaseClient');
-const { getPaginationRange } = require('../utils/pagination');
-const { applySupabaseFilters, isClientFilterActive } = require('../utils/supabaseFilters');
+const { supabaseAdmin } = require('@src/supabaseClient');
+const { getPaginationRange } = require('@utils/pagination');
+const { applySupabaseFilters, isClientFilterActive } = require('@utils/supabaseFilters');
 
 /**
  * Fetch a paginated list of employees with optional filters.
@@ -82,6 +82,7 @@ async function getAllEmployees(page = 1, limit = 6, filters = null) {
       employee_id_number: emp.employee_id_number || 'N/A',
       name: `${p.first_name} ${p.last_name}`,
       initials: `${p.first_name?.[0] || ''}${p.last_name?.[0] || ''}`,
+      avatar_url: p.avatar_url || null,
       status: p.status, // e.g. 'active', 'inactive'
       position: emp.position || 'N/A',
       client: companyName,
@@ -148,6 +149,7 @@ async function getEmployeeDetails(id) {
         clearances (
           id,
           clearance_type,
+          document_url,
           issue_date,
           expiry_date,
           status
@@ -225,6 +227,7 @@ async function getEmployeeDetails(id) {
     hire_date: emp.hire_date,
     base_salary: emp.base_salary,
     pay_frequency: emp.pay_frequency,
+    employment_type: emp.employment_type,
     current_company: companyName,
     current_site: siteName,
 
@@ -281,8 +284,224 @@ async function getEmployeeStats() {
   };
 }
 
+/**
+ * Helper to convert strings to Proper Case (Capitalized First Letter of Each Word)
+ */
+function toProperCase(str) {
+  if (!str) return str;
+  return str.toLowerCase().replace(/\b\w/g, s => s.toUpperCase());
+}
+
+/**
+ * Creates a new employee user, profile, employee details, and clearance records.
+ */
+async function createEmployee(data, clearancesData, avatarUrl = null) {
+  // Normalize strings
+  const firstName = toProperCase(data.firstName);
+  const middleName = data.middleName ? toProperCase(data.middleName) : null;
+  const lastName = toProperCase(data.lastName);
+  const suffix = data.suffix ? data.suffix.trim() : null; // Suffix stay as-is (e.g. Jr.)
+  const employmentType = (data.employmentType || 'regular').toLowerCase();
+  const payFrequency = 'semi_monthly';
+
+  // Normalize phone numbers (expect 10 digits from client, prepend +63)
+  const cleanPhone = (num) => {
+    if (!num) return null;
+    const digits = num.replace(/\D/g, '');
+    const main = digits.slice(-10);
+    return `+63${main}`;
+  };
+
+  const mobile = cleanPhone(data.mobile);
+  const emergencyContactNumber = cleanPhone(data.emergencyContact);
+
+  // 1. Invite auth user
+  const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(data.email, {redirectTo: 'http://localhost:5173/set-password'});
+
+  if (authError) throw authError;
+  const userId = authData.user.id;
+
+  // 2. Insert into profiles
+  const { error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .insert([{
+      id: userId,
+      first_name: firstName,
+      middle_name: middleName,
+      last_name: lastName,
+      contact_email: data.email,
+      phone_number: mobile,
+      avatar_url: avatarUrl,
+      role: 'employee',
+      status: 'active'
+    }]);
+
+  if (profileError) {
+    // Attempt rollback
+    await supabaseAdmin.auth.admin.deleteUser(userId);
+    throw profileError;
+  }
+
+  // 3. Insert into employees
+  const { error: empError } = await supabaseAdmin
+    .from('employees')
+    .insert([{
+      id: userId,
+      employee_id_number: data.employeeId,
+      position: data.position,
+      hire_date: data.hireDate,
+      base_salary: data.basicRate ? parseFloat(data.basicRate) : null,
+      pay_frequency: payFrequency,
+      tin_number: data.tinNumber || null,
+      sss_number: data.sssNumber || null,
+      philhealth_number: data.philhealthNumber || null,
+      pagibig_number: data.pagibigNumber || null,
+      date_of_birth: data.dob,
+      gender: data.gender,
+      civil_status: data.civilStatus,
+      height_cm: data.height ? parseFloat(data.height) : null,
+      educational_level: data.educationalLevel,
+      residential_address: data.address,
+      emergency_contact_name: toProperCase(data.emergencyName),
+      emergency_contact_number: emergencyContactNumber,
+      employment_type: employmentType,
+      latitude: data.latitude ? parseFloat(data.latitude) : null,
+      longitude: data.longitude ? parseFloat(data.longitude) : null
+    }]);
+
+  if (empError) throw empError;
+
+  // 4. Insert clearances if they exist
+  if (clearancesData && clearancesData.length > 0) {
+    const clearancesToInsert = clearancesData.map(c => ({
+      employee_id: userId,
+      clearance_type: c.type,
+      document_url: c.url,
+      issue_date: new Date().toISOString().split('T')[0], // Simplified assuming today's date
+      status: 'valid'
+    }));
+
+    const { error: clearError } = await supabaseAdmin
+      .from('clearances')
+      .insert(clearancesToInsert);
+
+    if (clearError) console.error("Failed to insert clearances:", clearError);
+    // Soft fail if clearances don't insert, we still have the employee
+  }
+
+  return { userId };
+}
+
+/**
+ * Determines the next available sequential Employee ID (PG-XXXXX).
+ */
+async function getNextEmployeeId() {
+  const { data, error } = await supabaseAdmin
+    .from('employees')
+    .select('employee_id_number')
+    .like('employee_id_number', 'PG-%')
+    .order('employee_id_number', { ascending: false })
+    .limit(1);
+
+  if (error) {
+    const err = new Error(error.message);
+    err.status = 500;
+    throw err;
+  }
+
+  if (!data || data.length === 0) {
+    return 'PG-00001';
+  }
+
+  const lastIdStr = data[0].employee_id_number; // e.g., 'PG-00010'
+  const match = lastIdStr.match(/PG-(\d+)/);
+  if (match) {
+    const nextNum = parseInt(match[1], 10) + 1;
+    return `PG-${String(nextNum).padStart(5, '0')}`;
+  }
+
+  return 'PG-00001'; // Fallback
+}
+
+/**
+ * Updates an existing employee's personal, contact, employment fields,
+ * and optionally upserts clearance document URLs.
+ *
+ * @param {string} id            - The profile UUID of the employee
+ * @param {Object} data          - Flat object of field updates
+ * @param {Array}  clearances    - Array of { type, url } for updated documents
+ */
+async function updateEmployee(id, data, clearances = []) {
+  // ── 1. Update profiles table ──────────────────────────────────────────────
+  const profilePatch = {};
+  if (data.phone_number  !== undefined) profilePatch.phone_number  = data.phone_number  || null;
+  if (data.contact_email !== undefined) profilePatch.contact_email = data.contact_email || null;
+
+  if (Object.keys(profilePatch).length > 0) {
+    const { error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .update(profilePatch)
+      .eq('id', id);
+    if (profileError) throw profileError;
+  }
+
+  // ── 2. Update employees table ─────────────────────────────────────────────
+  const empPatch = {};
+  if (data.date_of_birth           !== undefined) empPatch.date_of_birth           = data.date_of_birth           || null;
+  if (data.gender                  !== undefined) empPatch.gender                  = data.gender                  || null;
+  if (data.civil_status            !== undefined) empPatch.civil_status            = data.civil_status            || null;
+  if (data.height_cm               !== undefined) empPatch.height_cm               = data.height_cm ? parseFloat(data.height_cm) : null;
+  if (data.educational_level       !== undefined) empPatch.educational_level       = data.educational_level       || null;
+  if (data.residential_address     !== undefined) empPatch.residential_address     = data.residential_address     || null;
+  if (data.emergency_contact_name  !== undefined) {
+    const name = (data.emergency_contact_name || '').trim();
+    empPatch.emergency_contact_name = name
+      ? name.replace(/\b\w/g, c => c.toUpperCase())
+      : null;
+  }
+  if (data.emergency_contact_number!== undefined) {
+    const digits = (data.emergency_contact_number || '').replace(/\D/g, '').slice(-10);
+    empPatch.emergency_contact_number = digits ? `+63${digits}` : null;
+  }
+  if (data.position        !== undefined) empPatch.position        = data.position        || null;
+  if (data.employment_type !== undefined) empPatch.employment_type = (data.employment_type || '').toLowerCase() || null;
+  if (data.latitude        !== undefined) empPatch.latitude        = data.latitude ? parseFloat(data.latitude) : null;
+  if (data.longitude       !== undefined) empPatch.longitude       = data.longitude ? parseFloat(data.longitude) : null;
+
+  if (Object.keys(empPatch).length > 0) {
+    const { error: empError } = await supabaseAdmin
+      .from('employees')
+      .update(empPatch)
+      .eq('id', id);
+    if (empError) throw empError;
+  }
+
+  // ── 3. Upsert clearances ──────────────────────────────────────────────────
+  if (clearances.length > 0) {
+    const today = new Date().toISOString().split('T')[0];
+    const upsertRows = clearances.map(c => ({
+      employee_id:    id,
+      clearance_type: c.type,
+      document_url:   c.url,
+      issue_date:     today,
+      status:         'valid'
+    }));
+
+    const { error: clearError } = await supabaseAdmin
+      .from('clearances')
+      .upsert(upsertRows, { onConflict: 'employee_id,clearance_type' });
+
+    if (clearError) throw clearError;
+  }
+
+  return { success: true };
+}
+
 module.exports = {
   getAllEmployees,
   getEmployeeDetails,
-  getEmployeeStats
+  getEmployeeStats,
+  createEmployee,
+  updateEmployee,
+  getNextEmployeeId
 };

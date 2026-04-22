@@ -1,5 +1,6 @@
-const employeeService = require('../services/employeeService');
-const { formatPaginatedResponse } = require('../utils/pagination');
+const employeeService = require('@services/employeeService');
+const { formatPaginatedResponse } = require('@utils/pagination');
+const { uploadBufferToCloudinary } = require('../../config/cloudinary');
 
 /**
  * GET /api/web/employees
@@ -45,8 +46,97 @@ async function getEmployeeStats(req, res) {
   }
 }
 
+/**
+ * POST /api/web/employees
+ */
+async function createEmployee(req, res) {
+  try {
+    const data = {};
+    // Trim string inputs
+    Object.keys(req.body).forEach(key => {
+      data[key] = typeof req.body[key] === 'string' ? req.body[key].trim() : req.body[key];
+    });
+
+    const files = req.files || []; // from multer
+    let avatarUrl = null;
+
+    // 1. Process files to Cloudinary
+    const clearancesData = [];
+    for (const file of files) {
+      if (file.fieldname === 'avatar') {
+        avatarUrl = await uploadBufferToCloudinary(file.buffer);
+      } else if (file.fieldname.startsWith('document_')) {
+        const type = file.fieldname.replace('document_', '');
+        const secureUrl = await uploadBufferToCloudinary(file.buffer);
+        clearancesData.push({ type, url: secureUrl });
+      }
+    }
+
+    // 2. Call service to create user in DB
+    const { userId } = await employeeService.createEmployee(data, clearancesData, avatarUrl);
+
+    return res.status(201).json({ message: 'Employee created and invited successfully', userId });
+  } catch (err) {
+    console.error(err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to create employee' });
+  }
+}
+
+/**
+ * GET /api/web/employees/next-id
+ */
+async function getNextEmployeeId(req, res) {
+  try {
+    const nextId = await employeeService.getNextEmployeeId();
+    return res.json({ nextId });
+  } catch (err) {
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message });
+  }
+}
+
+/**
+ * PATCH /api/web/employees/:id
+ */
+async function updateEmployee(req, res) {
+  try {
+    const { id } = req.params;
+    const data = {};
+
+    // Trim all string body fields
+    Object.keys(req.body).forEach(key => {
+      data[key] = typeof req.body[key] === 'string' ? req.body[key].trim() : req.body[key];
+    });
+
+    const files = req.files || [];
+    const clearancesData = [];
+
+    // Upload any replacement clearance documents to Cloudinary
+    for (const file of files) {
+      if (file.fieldname.startsWith('document_')) {
+        const type = file.fieldname.replace('document_', '');
+        const secureUrl = await uploadBufferToCloudinary(file.buffer);
+        clearancesData.push({ type, url: secureUrl });
+      }
+    }
+
+    await employeeService.updateEmployee(id, data, clearancesData);
+
+    return res.json({ message: 'Employee updated successfully' });
+  } catch (err) {
+    console.error(err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to update employee' });
+  }
+}
+
 module.exports = {
   getAllEmployees,
   getEmployeeDetails,
-  getEmployeeStats
+  getEmployeeStats,
+  createEmployee,
+  updateEmployee,
+  getNextEmployeeId
 };
+
