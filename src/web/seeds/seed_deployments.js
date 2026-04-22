@@ -5,6 +5,7 @@
  *   - Client Sites for existing clients
  *   - Deployments for a subset of existing employees (guards)
  *   - Schedules for those deployments
+ *   - Attendance logs for today (for stats on EmployeesPage)
  *   - Payroll Records for those guards
  *
  * Requires SUPABASE_SERVICE_ROLE_KEY in .env
@@ -139,15 +140,28 @@ async function seed() {
     // Days 1-5 (Mon-Fri) or 0-6 (All week)
     const daysArr = isNightShift ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5]; 
 
-    const { error: schedError } = await supabase.from('schedules').insert({
+    const { data: schedule, error: schedError } = await supabase.from('schedules').insert({
       deployment_id: deployment.id,
       days_of_week: daysArr, 
       shift_start: shiftStart,
       shift_end: shiftEnd,
       is_active: true
-    });
+    }).select().single();
 
     if (schedError) throw new Error(`Schedule failed for ${guard.name}: ${schedError.message}`);
+
+    // Create an attendance log for today so the Dashboard UI shows "Active on Duty" > 0
+    const todayStr = new Date().toISOString().split('T')[0];
+    const { error: clockError } = await supabase.from('attendance_logs').insert({
+      employee_id: guard.employee_id,
+      site_id: site.id,
+      schedule_id: schedule.id,
+      log_date: todayStr,
+      clock_in: new Date().toISOString(),
+      status: i % 3 === 0 ? 'late' : 'on_time'
+    });
+    
+    if (clockError) throw new Error(`Clock-in failed for ${guard.name}: ${clockError.message}`);
   }
 
   // 5. Create Payroll Records

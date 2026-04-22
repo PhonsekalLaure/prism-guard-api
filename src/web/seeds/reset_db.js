@@ -13,7 +13,17 @@ async function resetDatabase() {
   try {
     // 1. Delete dependent tables first due to foreign key constraints
     console.log('Clearing core tables...');
+    await supabase.from('location_pings').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('attendance_logs').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('schedules').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('payroll_records').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('billings').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('service_tickets').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await supabase.from('incidents').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('cash_advances').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('leave_balances').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('leave_requests').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    await supabase.from('clearances').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await supabase.from('deployments').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await supabase.from('client_sites').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     await supabase.from('employees').delete().neq('id', '00000000-0000-0000-0000-000000000000');

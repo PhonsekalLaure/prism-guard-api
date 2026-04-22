@@ -64,7 +64,8 @@ const employees = [
     phone_number: '+639172000001',
     position: 'Security Guard',
     base_salary: 18000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'regular',
     tin_number: '123-456-789-000',
     sss_number: '04-1234567-8',
     philhealth_number: '12-345678901-2',
@@ -72,9 +73,12 @@ const employees = [
     date_of_birth: '1990-05-15',
     gender: 'Male',
     civil_status: 'Single',
+    educational_level: 'College Graduate',
+    height_cm: 172,
     residential_address: '123 Sampaguita St, Quezon City',
     emergency_contact_name: 'Maria Santos',
     emergency_contact_number: '+639172000099',
+    avatar_url: 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg'
   },
   {
     first_name: 'Jose',
@@ -84,7 +88,8 @@ const employees = [
     phone_number: '+639172000002',
     position: 'Security Guard',
     base_salary: 18000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'regular',
     tin_number: '123-456-789-001',
     sss_number: '04-1234567-9',
     philhealth_number: '12-345678901-3',
@@ -92,9 +97,12 @@ const employees = [
     date_of_birth: '1992-08-22',
     gender: 'Male',
     civil_status: 'Married',
+    educational_level: 'High School',
+    height_cm: 168,
     residential_address: '456 Narra St, Manila',
     emergency_contact_name: 'Ana Dela Cruz',
     emergency_contact_number: '+639172000088',
+    avatar_url: null
   },
   {
     first_name: 'Daniel',
@@ -104,7 +112,8 @@ const employees = [
     phone_number: '+639172000003',
     position: 'Security Guard',
     base_salary: 18000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'regular',
     tin_number: '123-456-789-002',
     sss_number: '04-1234567-0',
     philhealth_number: '12-345678901-4',
@@ -112,9 +121,12 @@ const employees = [
     date_of_birth: '1985-11-10',
     gender: 'Male',
     civil_status: 'Widowed',
+    educational_level: 'Vocational',
+    height_cm: 175,
     residential_address: '789 Mabini St, Makati',
     emergency_contact_name: 'Elena Garcia',
     emergency_contact_number: '+639172000077',
+    avatar_url: null
   },
   {
     first_name: 'Miguel',
@@ -124,7 +136,8 @@ const employees = [
     phone_number: '+639172000004',
     position: 'Security Guard',
     base_salary: 18000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'reliever',
     tin_number: '123-456-789-003',
     sss_number: '04-1234567-1',
     philhealth_number: '12-345678901-5',
@@ -132,9 +145,12 @@ const employees = [
     date_of_birth: '1988-02-14',
     gender: 'Male',
     civil_status: 'Single',
+    educational_level: 'High School',
+    height_cm: 170,
     residential_address: '321 Rizal Ave, Pasay',
     emergency_contact_name: 'Rosa Ramos',
     emergency_contact_number: '+639172000066',
+    avatar_url: null
   },
   {
     first_name: 'Rafael',
@@ -144,7 +160,8 @@ const employees = [
     phone_number: '+639172000005',
     position: 'Security Guard',
     base_salary: 18000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'regular',
     tin_number: '123-456-789-004',
     sss_number: '04-1234567-2',
     philhealth_number: '12-345678901-6',
@@ -152,9 +169,12 @@ const employees = [
     date_of_birth: '1995-07-30',
     gender: 'Male',
     civil_status: 'Married',
+    educational_level: 'Some College',
+    height_cm: 165,
     residential_address: '654 Taft Ave, Manila',
     emergency_contact_name: 'Nina Bautista',
     emergency_contact_number: '+639172000055',
+    avatar_url: null
   },
   {
     first_name: 'Adrian',
@@ -164,7 +184,8 @@ const employees = [
     phone_number: '+639172000006',
     position: 'Shift Supervisor',
     base_salary: 22000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'regular',
     tin_number: '123-456-789-005',
     sss_number: '04-1234567-3',
     philhealth_number: '12-345678901-7',
@@ -172,9 +193,12 @@ const employees = [
     date_of_birth: '1982-12-05',
     gender: 'Male',
     civil_status: 'Married',
+    educational_level: 'College Graduate',
+    height_cm: 174,
     residential_address: '987 Aurora Blvd, Quezon City',
     emergency_contact_name: 'Liza Fernandez',
     emergency_contact_number: '+639172000044',
+    avatar_url: null
   },
   {
     first_name: 'Paolo',
@@ -184,7 +208,8 @@ const employees = [
     phone_number: '+639172000007',
     position: 'Security Guard',
     base_salary: 18000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'regular',
     tin_number: '123-456-789-006',
     sss_number: '04-1234567-4',
     philhealth_number: '12-345678901-8',
@@ -192,9 +217,12 @@ const employees = [
     date_of_birth: '1991-03-18',
     gender: 'Male',
     civil_status: 'Single',
+    educational_level: 'High School',
+    height_cm: 169,
     residential_address: '147 Shaw Blvd, Mandaluyong',
     emergency_contact_name: 'Diana Lim',
     emergency_contact_number: '+639172000033',
+    avatar_url: null
   },
   {
     first_name: 'Kevin',
@@ -204,7 +232,8 @@ const employees = [
     phone_number: '+639172000008',
     position: 'Security Guard',
     base_salary: 18000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'regular',
     tin_number: '123-456-789-007',
     sss_number: '04-1234567-5',
     philhealth_number: '12-345678901-9',
@@ -212,9 +241,12 @@ const employees = [
     date_of_birth: '1993-09-25',
     gender: 'Male',
     civil_status: 'Married',
+    educational_level: 'Vocational',
+    height_cm: 171,
     residential_address: '258 Ortigas Ave, Pasig',
     emergency_contact_name: 'Marie Tan',
     emergency_contact_number: '+639172000022',
+    avatar_url: null
   },
   {
     first_name: 'James',
@@ -224,7 +256,8 @@ const employees = [
     phone_number: '+639172000009',
     position: 'Security Guard',
     base_salary: 18000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'regular',
     tin_number: '123-456-789-008',
     sss_number: '04-1234567-6',
     philhealth_number: '12-345678901-0',
@@ -232,9 +265,12 @@ const employees = [
     date_of_birth: '1987-04-12',
     gender: 'Male',
     civil_status: 'Single',
+    educational_level: 'High School',
+    height_cm: 167,
     residential_address: '369 EDSA, Caloocan',
     emergency_contact_name: 'Susan Navarro',
     emergency_contact_number: '+639172000011',
+    avatar_url: null
   },
   {
     first_name: 'Carlos',
@@ -244,7 +280,8 @@ const employees = [
     phone_number: '+639172000010',
     position: 'Shift Supervisor',
     base_salary: 22000,
-    pay_frequency: 'monthly',
+    pay_frequency: 'semi_monthly',
+    employment_type: 'regular',
     tin_number: '123-456-789-009',
     sss_number: '04-1234567-7',
     philhealth_number: '12-345678901-1',
@@ -252,9 +289,12 @@ const employees = [
     date_of_birth: '1980-06-08',
     gender: 'Male',
     civil_status: 'Married',
+    educational_level: 'Some College',
+    height_cm: 173,
     residential_address: '753 Marcos Hwy, Antipolo',
     emergency_contact_name: 'Teresa Aquino',
     emergency_contact_number: '+639172000000',
+    avatar_url: null
   },
 ];
 
@@ -352,6 +392,7 @@ async function insertProfile(id, userData) {
     phone_number: userData.phone_number,
     role: userData.role || 'employee',
     status: 'active',
+    avatar_url: userData.avatar_url || null,
   });
 
   if (error) throw new Error(`Profile insert failed for ${userData.contact_email}: ${error.message}`);
@@ -375,6 +416,7 @@ async function seed() {
       hire_date: new Date().toISOString().split('T')[0],
       base_salary: null,
       pay_frequency: null,
+      employment_type: 'regular'
     });
 
     if (error) throw new Error(`Employee insert failed for ${admin.contact_email}: ${error.message}`);
@@ -394,6 +436,7 @@ async function seed() {
       hire_date: new Date().toISOString().split('T')[0],
       base_salary: emp.base_salary,
       pay_frequency: emp.pay_frequency,
+      employment_type: emp.employment_type || 'regular',
       tin_number: emp.tin_number || null,
       sss_number: emp.sss_number || null,
       philhealth_number: emp.philhealth_number || null,
@@ -401,6 +444,8 @@ async function seed() {
       date_of_birth: emp.date_of_birth || null,
       gender: emp.gender || null,
       civil_status: emp.civil_status || null,
+      educational_level: emp.educational_level || null,
+      height_cm: emp.height_cm || null,
       residential_address: emp.residential_address || null,
       emergency_contact_name: emp.emergency_contact_name || null,
       emergency_contact_number: emp.emergency_contact_number || null,
