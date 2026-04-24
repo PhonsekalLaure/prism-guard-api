@@ -1,6 +1,12 @@
 const { supabaseAdmin } = require('@src/supabaseClient');
 const { getPaginationRange } = require('@utils/pagination');
 const { applySupabaseFilters, isClientFilterActive } = require('@utils/supabaseFilters');
+const {
+  buildBadRequestError,
+  normalizeMobileNumber,
+  normalizeAddressWithCoordinates,
+} = require('@utils/requestValidation');
+const { rollbackProvisionedUser } = require('@utils/userProvisioning');
 
 /**
  * Fetch a paginated list of employees with optional filters.
@@ -132,6 +138,8 @@ async function getEmployeeDetails(id) {
         educational_level,
         employment_type,
         residential_address,
+        latitude,
+        longitude,
         emergency_contact_name,
         emergency_contact_number,
         deployments!deployments_employee_id_fkey (
@@ -219,6 +227,8 @@ async function getEmployeeDetails(id) {
     height_cm: emp.height_cm,
     educational_level: emp.educational_level,
     residential_address: emp.residential_address,
+    latitude: emp.latitude,
+    longitude: emp.longitude,
     emergency_contact_name: emp.emergency_contact_name,
     emergency_contact_number: emp.emergency_contact_number,
 
@@ -303,93 +313,119 @@ async function createEmployee(data, clearancesData, avatarUrl = null) {
   const suffix = data.suffix ? data.suffix.trim() : null; // Suffix stay as-is (e.g. Jr.)
   const employmentType = (data.employmentType || 'regular').toLowerCase();
   const payFrequency = 'semi_monthly';
+  const mobile = normalizeMobileNumber(data.mobile, { required: true, fieldLabel: 'Mobile number' });
+  const emergencyContactNumber = normalizeMobileNumber(data.emergencyContact, {
+    required: true,
+    fieldLabel: 'Emergency contact number',
+  });
+  const normalizedAddress = normalizeAddressWithCoordinates(
+    data.address,
+    data.latitude,
+    data.longitude,
+    {
+      addressLabel: 'Residential address',
+      requireAddress: true,
+      requireCoordinates: true,
+    }
+  );
 
-  // Normalize phone numbers (expect 10 digits from client, prepend +63)
-  const cleanPhone = (num) => {
-    if (!num) return null;
-    const digits = num.replace(/\D/g, '');
-    const main = digits.slice(-10);
-    return `+63${main}`;
-  };
+  const allowedEmploymentTypes = new Set(['regular', 'reliever']);
+  if (!allowedEmploymentTypes.has(employmentType)) {
+    throw buildBadRequestError('Invalid employment type.');
+  }
 
-  const mobile = cleanPhone(data.mobile);
-  const emergencyContactNumber = cleanPhone(data.emergencyContact);
+  if (data.hireDate && data.dob) {
+    const hireDate = new Date(data.hireDate);
+    const birthDate = new Date(data.dob);
+    if (hireDate < birthDate) {
+      throw buildBadRequestError('Hire date cannot be earlier than date of birth.');
+    }
+  }
 
   // 1. Invite auth user
-  const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(data.email, {redirectTo: 'http://localhost:5173/set-password'});
+  let userId = null;
 
-  if (authError) throw authError;
-  const userId = authData.user.id;
+  try {
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
+      data.email,
+      { redirectTo: 'http://localhost:5173/set-password' }
+    );
 
-  // 2. Insert into profiles
-  const { error: profileError } = await supabaseAdmin
-    .from('profiles')
-    .insert([{
-      id: userId,
-      first_name: firstName,
-      middle_name: middleName,
-      last_name: lastName,
-      contact_email: data.email,
-      phone_number: mobile,
-      avatar_url: avatarUrl,
-      role: 'employee',
-      status: 'active'
-    }]);
+    if (authError) throw authError;
+    userId = authData.user.id;
 
-  if (profileError) {
-    // Attempt rollback
-    await supabaseAdmin.auth.admin.deleteUser(userId);
-    throw profileError;
+    // 2. Insert into profiles
+    const { error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .insert([{
+        id: userId,
+        first_name: firstName,
+        middle_name: middleName,
+        last_name: lastName,
+        suffix,
+        contact_email: data.email,
+        phone_number: mobile,
+        avatar_url: avatarUrl,
+        role: 'employee',
+        status: 'active'
+      }]);
+
+    if (profileError) throw profileError;
+
+    // 3. Insert into employees
+    const { error: empError } = await supabaseAdmin
+      .from('employees')
+      .insert([{
+        id: userId,
+        employee_id_number: data.employeeId,
+        position: data.position,
+        hire_date: data.hireDate,
+        base_salary: data.basicRate ? parseFloat(data.basicRate) : null,
+        pay_frequency: payFrequency,
+        tin_number: data.tinNumber || null,
+        sss_number: data.sssNumber || null,
+        philhealth_number: data.philhealthNumber || null,
+        pagibig_number: data.pagibigNumber || null,
+        date_of_birth: data.dob,
+        gender: data.gender,
+        civil_status: data.civilStatus,
+        height_cm: data.height ? parseFloat(data.height) : null,
+        educational_level: data.educationalLevel,
+        residential_address: normalizedAddress.address,
+        emergency_contact_name: toProperCase(data.emergencyName),
+        emergency_contact_number: emergencyContactNumber,
+        employment_type: employmentType,
+        latitude: normalizedAddress.latitude,
+        longitude: normalizedAddress.longitude
+      }]);
+
+    if (empError) throw empError;
+
+    // 4. Insert clearances if they exist
+    if (clearancesData && clearancesData.length > 0) {
+      const clearancesToInsert = clearancesData.map(c => ({
+        employee_id: userId,
+        clearance_type: c.type,
+        document_url: c.url,
+        issue_date: new Date().toISOString().split('T')[0], // Simplified assuming today's date
+        status: 'valid'
+      }));
+
+      const { error: clearError } = await supabaseAdmin
+        .from('clearances')
+        .insert(clearancesToInsert);
+
+      if (clearError) console.error("Failed to insert clearances:", clearError);
+      // Soft fail if clearances don't insert, we still have the employee
+    }
+
+    return { userId };
+  } catch (err) {
+    if (userId) {
+      await rollbackProvisionedUser(supabaseAdmin, userId, 'createEmployee');
+    }
+    throw err;
   }
-
-  // 3. Insert into employees
-  const { error: empError } = await supabaseAdmin
-    .from('employees')
-    .insert([{
-      id: userId,
-      employee_id_number: data.employeeId,
-      position: data.position,
-      hire_date: data.hireDate,
-      base_salary: data.basicRate ? parseFloat(data.basicRate) : null,
-      pay_frequency: payFrequency,
-      tin_number: data.tinNumber || null,
-      sss_number: data.sssNumber || null,
-      philhealth_number: data.philhealthNumber || null,
-      pagibig_number: data.pagibigNumber || null,
-      date_of_birth: data.dob,
-      gender: data.gender,
-      civil_status: data.civilStatus,
-      height_cm: data.height ? parseFloat(data.height) : null,
-      educational_level: data.educationalLevel,
-      residential_address: data.address,
-      emergency_contact_name: toProperCase(data.emergencyName),
-      emergency_contact_number: emergencyContactNumber,
-      employment_type: employmentType,
-      latitude: data.latitude ? parseFloat(data.latitude) : null,
-      longitude: data.longitude ? parseFloat(data.longitude) : null
-    }]);
-
-  if (empError) throw empError;
-
-  // 4. Insert clearances if they exist
-  if (clearancesData && clearancesData.length > 0) {
-    const clearancesToInsert = clearancesData.map(c => ({
-      employee_id: userId,
-      clearance_type: c.type,
-      document_url: c.url,
-      issue_date: new Date().toISOString().split('T')[0], // Simplified assuming today's date
-      status: 'valid'
-    }));
-
-    const { error: clearError } = await supabaseAdmin
-      .from('clearances')
-      .insert(clearancesToInsert);
-
-    if (clearError) console.error("Failed to insert clearances:", clearError);
-    // Soft fail if clearances don't insert, we still have the employee
-  }
-
-  return { userId };
 }
 
 /**
@@ -434,7 +470,12 @@ async function getNextEmployeeId() {
 async function updateEmployee(id, data, clearances = []) {
   // ── 1. Update profiles table ──────────────────────────────────────────────
   const profilePatch = {};
-  if (data.phone_number  !== undefined) profilePatch.phone_number  = data.phone_number  || null;
+  if (data.phone_number !== undefined) {
+    profilePatch.phone_number = normalizeMobileNumber(data.phone_number, {
+      required: true,
+      fieldLabel: 'Phone number',
+    });
+  }
   if (data.contact_email !== undefined) profilePatch.contact_email = data.contact_email || null;
 
   if (Object.keys(profilePatch).length > 0) {
@@ -452,22 +493,35 @@ async function updateEmployee(id, data, clearances = []) {
   if (data.civil_status            !== undefined) empPatch.civil_status            = data.civil_status            || null;
   if (data.height_cm               !== undefined) empPatch.height_cm               = data.height_cm ? parseFloat(data.height_cm) : null;
   if (data.educational_level       !== undefined) empPatch.educational_level       = data.educational_level       || null;
-  if (data.residential_address     !== undefined) empPatch.residential_address     = data.residential_address     || null;
+  if (data.residential_address !== undefined || data.latitude !== undefined || data.longitude !== undefined) {
+    const normalizedAddress = normalizeAddressWithCoordinates(
+      data.residential_address,
+      data.latitude,
+      data.longitude,
+      {
+        addressLabel: 'Residential address',
+        requireAddress: false,
+        requireCoordinates: false,
+      }
+    );
+    empPatch.residential_address = normalizedAddress.address;
+    empPatch.latitude = normalizedAddress.latitude;
+    empPatch.longitude = normalizedAddress.longitude;
+  }
   if (data.emergency_contact_name  !== undefined) {
     const name = (data.emergency_contact_name || '').trim();
     empPatch.emergency_contact_name = name
       ? name.replace(/\b\w/g, c => c.toUpperCase())
       : null;
   }
-  if (data.emergency_contact_number!== undefined) {
-    const digits = (data.emergency_contact_number || '').replace(/\D/g, '').slice(-10);
-    empPatch.emergency_contact_number = digits ? `+63${digits}` : null;
+  if (data.emergency_contact_number !== undefined) {
+    empPatch.emergency_contact_number = normalizeMobileNumber(data.emergency_contact_number, {
+      required: false,
+      fieldLabel: 'Emergency contact number',
+    });
   }
   if (data.position        !== undefined) empPatch.position        = data.position        || null;
   if (data.employment_type !== undefined) empPatch.employment_type = (data.employment_type || '').toLowerCase() || null;
-  if (data.latitude        !== undefined) empPatch.latitude        = data.latitude ? parseFloat(data.latitude) : null;
-  if (data.longitude       !== undefined) empPatch.longitude       = data.longitude ? parseFloat(data.longitude) : null;
-
   if (Object.keys(empPatch).length > 0) {
     const { error: empError } = await supabaseAdmin
       .from('employees')

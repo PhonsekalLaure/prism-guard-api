@@ -51,6 +51,29 @@ async function getEmployeeStats(req, res) {
  */
 async function createEmployee(req, res) {
   try {
+    const {
+      email,
+      firstName,
+      lastName,
+      mobile,
+      address,
+      latitude,
+      longitude,
+      employeeId,
+      position,
+      hireDate,
+    } = req.body;
+
+    if (
+      !email || !firstName || !lastName || !mobile ||
+      !address || latitude === undefined || longitude === undefined ||
+      !employeeId || !position || !hireDate
+    ) {
+      return res.status(400).json({
+        error: 'Missing required fields: email, firstName, lastName, mobile, address, latitude, longitude, employeeId, position, and hireDate are required.'
+      });
+    }
+
     const data = {};
     // Trim string inputs
     Object.keys(req.body).forEach(key => {
@@ -64,10 +87,10 @@ async function createEmployee(req, res) {
     const clearancesData = [];
     for (const file of files) {
       if (file.fieldname === 'avatar') {
-        avatarUrl = await uploadBufferToCloudinary(file.buffer);
+        avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/avatars');
       } else if (file.fieldname.startsWith('document_')) {
         const type = file.fieldname.replace('document_', '');
-        const secureUrl = await uploadBufferToCloudinary(file.buffer);
+        const secureUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/documents');
         clearancesData.push({ type, url: secureUrl });
       }
     }
@@ -116,7 +139,7 @@ async function updateEmployee(req, res) {
     for (const file of files) {
       if (file.fieldname.startsWith('document_')) {
         const type = file.fieldname.replace('document_', '');
-        const secureUrl = await uploadBufferToCloudinary(file.buffer);
+        const secureUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/documents');
         clearancesData.push({ type, url: secureUrl });
       }
     }
@@ -139,4 +162,3 @@ module.exports = {
   updateEmployee,
   getNextEmployeeId
 };
-
