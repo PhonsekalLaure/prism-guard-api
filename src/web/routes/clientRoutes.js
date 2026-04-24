@@ -1,6 +1,8 @@
 const express = require('express');
 const { requireAuth, requireRole } = require('@middlewares/authMiddleware');
-const { getAllClients } = require('@controllers/clientController');
+const paginationMiddleware = require('@middlewares/paginationMiddleware');
+const filterMiddleware = require('@middlewares/filterMiddleware');
+const { getAllClients, getClientDetails, getClientStats, getClientsList, createClient, updateClient } = require('@controllers/clientController');
 
 const router = express.Router();
 
@@ -8,6 +10,21 @@ const router = express.Router();
 router.use(requireAuth, requireRole('admin'));
 
 // GET /api/web/clients
-router.get('/', getAllClients);
+router.get('/', paginationMiddleware(6), filterMiddleware, getAllClients);
+
+// POST /api/web/clients
+router.post('/', createClient);
+
+// GET /api/web/clients/stats (Must be before /:id)
+router.get('/stats', getClientStats);
+
+// GET /api/web/clients/list (Must be before /:id)
+router.get('/list', getClientsList);
+
+// GET /api/web/clients/:id
+router.get('/:id', getClientDetails);
+
+// PATCH /api/web/clients/:id
+router.patch('/:id', updateClient);
 
 module.exports = router;
