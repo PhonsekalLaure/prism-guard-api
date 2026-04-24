@@ -2,11 +2,11 @@
  * Seed script for users (auth.users + profiles + employees/clients).
  *
  * Creates:
- *   - 3 admins  (president, operations manager, secretary)
- *   - 10 employees (security guards)
+ *   - 3 admins
+ *   - 10 employees
  *   - 5 clients
  *
- * Requires SUPABASE_SERVICE_ROLE_KEY in .env (for auth.admin).
+ * Requires SUPABASE_SERVICE_ROLE_KEY in .env.
  *
  * Usage:
  *   node src/web/seeds/seed_users.js
@@ -15,13 +15,10 @@
 require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 
-// Service-role client — bypasses RLS and can create auth users
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
-
-// ─── Seed Data ───────────────────────────────────────────────
 
 const DEFAULT_PASSWORD = 'PrismGuard2026!';
 
@@ -34,6 +31,7 @@ const admins = [
     phone_number: '+639171000001',
     role: 'admin',
     position: 'President',
+    hire_date: '2019-04-08',
   },
   {
     first_name: 'Carmen',
@@ -43,6 +41,7 @@ const admins = [
     phone_number: '+639171000002',
     role: 'admin',
     position: 'Operations Manager',
+    hire_date: '2020-09-14',
   },
   {
     first_name: 'Angela',
@@ -52,6 +51,7 @@ const admins = [
     phone_number: '+639171000003',
     role: 'admin',
     position: 'Secretary',
+    hire_date: '2022-02-21',
   },
 ];
 
@@ -63,6 +63,7 @@ const employees = [
     contact_email: 'marco.santos@prismguard.com',
     phone_number: '+639172000001',
     position: 'Security Guard',
+    hire_date: '2021-03-15',
     base_salary: 18000,
     pay_frequency: 'semi_monthly',
     employment_type: 'regular',
@@ -78,7 +79,7 @@ const employees = [
     residential_address: '123 Sampaguita St, Quezon City',
     emergency_contact_name: 'Maria Santos',
     emergency_contact_number: '+639172000099',
-    avatar_url: 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg'
+    avatar_url: 'https://res.cloudinary.com/demo/image/upload/v1312461204/sample.jpg',
   },
   {
     first_name: 'Jose',
@@ -87,6 +88,7 @@ const employees = [
     contact_email: 'jose.delacruz@prismguard.com',
     phone_number: '+639172000002',
     position: 'Security Guard',
+    hire_date: '2022-07-04',
     base_salary: 18000,
     pay_frequency: 'semi_monthly',
     employment_type: 'regular',
@@ -102,7 +104,7 @@ const employees = [
     residential_address: '456 Narra St, Manila',
     emergency_contact_name: 'Ana Dela Cruz',
     emergency_contact_number: '+639172000088',
-    avatar_url: null
+    avatar_url: null,
   },
   {
     first_name: 'Daniel',
@@ -111,6 +113,7 @@ const employees = [
     contact_email: 'daniel.garcia@prismguard.com',
     phone_number: '+639172000003',
     position: 'Security Guard',
+    hire_date: '2020-11-23',
     base_salary: 18000,
     pay_frequency: 'semi_monthly',
     employment_type: 'regular',
@@ -126,7 +129,7 @@ const employees = [
     residential_address: '789 Mabini St, Makati',
     emergency_contact_name: 'Elena Garcia',
     emergency_contact_number: '+639172000077',
-    avatar_url: null
+    avatar_url: null,
   },
   {
     first_name: 'Miguel',
@@ -135,6 +138,7 @@ const employees = [
     contact_email: 'miguel.ramos@prismguard.com',
     phone_number: '+639172000004',
     position: 'Security Guard',
+    hire_date: '2023-01-09',
     base_salary: 18000,
     pay_frequency: 'semi_monthly',
     employment_type: 'reliever',
@@ -150,7 +154,7 @@ const employees = [
     residential_address: '321 Rizal Ave, Pasay',
     emergency_contact_name: 'Rosa Ramos',
     emergency_contact_number: '+639172000066',
-    avatar_url: null
+    avatar_url: null,
   },
   {
     first_name: 'Rafael',
@@ -159,6 +163,7 @@ const employees = [
     contact_email: 'rafael.bautista@prismguard.com',
     phone_number: '+639172000005',
     position: 'Security Guard',
+    hire_date: '2024-02-12',
     base_salary: 18000,
     pay_frequency: 'semi_monthly',
     employment_type: 'regular',
@@ -174,7 +179,7 @@ const employees = [
     residential_address: '654 Taft Ave, Manila',
     emergency_contact_name: 'Nina Bautista',
     emergency_contact_number: '+639172000055',
-    avatar_url: null
+    avatar_url: null,
   },
   {
     first_name: 'Adrian',
@@ -183,6 +188,7 @@ const employees = [
     contact_email: 'adrian.fernandez@prismguard.com',
     phone_number: '+639172000006',
     position: 'Shift Supervisor',
+    hire_date: '2019-08-19',
     base_salary: 22000,
     pay_frequency: 'semi_monthly',
     employment_type: 'regular',
@@ -198,7 +204,7 @@ const employees = [
     residential_address: '987 Aurora Blvd, Quezon City',
     emergency_contact_name: 'Liza Fernandez',
     emergency_contact_number: '+639172000044',
-    avatar_url: null
+    avatar_url: null,
   },
   {
     first_name: 'Paolo',
@@ -207,6 +213,7 @@ const employees = [
     contact_email: 'paolo.lim@prismguard.com',
     phone_number: '+639172000007',
     position: 'Security Guard',
+    hire_date: '2021-10-11',
     base_salary: 18000,
     pay_frequency: 'semi_monthly',
     employment_type: 'regular',
@@ -222,7 +229,7 @@ const employees = [
     residential_address: '147 Shaw Blvd, Mandaluyong',
     emergency_contact_name: 'Diana Lim',
     emergency_contact_number: '+639172000033',
-    avatar_url: null
+    avatar_url: null,
   },
   {
     first_name: 'Kevin',
@@ -231,6 +238,7 @@ const employees = [
     contact_email: 'kevin.tan@prismguard.com',
     phone_number: '+639172000008',
     position: 'Security Guard',
+    hire_date: '2023-06-26',
     base_salary: 18000,
     pay_frequency: 'semi_monthly',
     employment_type: 'regular',
@@ -246,7 +254,7 @@ const employees = [
     residential_address: '258 Ortigas Ave, Pasig',
     emergency_contact_name: 'Marie Tan',
     emergency_contact_number: '+639172000022',
-    avatar_url: null
+    avatar_url: null,
   },
   {
     first_name: 'James',
@@ -255,6 +263,7 @@ const employees = [
     contact_email: 'james.navarro@prismguard.com',
     phone_number: '+639172000009',
     position: 'Security Guard',
+    hire_date: '2022-04-18',
     base_salary: 18000,
     pay_frequency: 'semi_monthly',
     employment_type: 'regular',
@@ -270,7 +279,7 @@ const employees = [
     residential_address: '369 EDSA, Caloocan',
     emergency_contact_name: 'Susan Navarro',
     emergency_contact_number: '+639172000011',
-    avatar_url: null
+    avatar_url: null,
   },
   {
     first_name: 'Carlos',
@@ -279,6 +288,7 @@ const employees = [
     contact_email: 'carlos.aquino@prismguard.com',
     phone_number: '+639172000010',
     position: 'Shift Supervisor',
+    hire_date: '2018-05-28',
     base_salary: 22000,
     pay_frequency: 'semi_monthly',
     employment_type: 'regular',
@@ -294,7 +304,7 @@ const employees = [
     residential_address: '753 Marcos Hwy, Antipolo',
     emergency_contact_name: 'Teresa Aquino',
     emergency_contact_number: '+639172000000',
-    avatar_url: null
+    avatar_url: null,
   },
 ];
 
@@ -305,10 +315,14 @@ const clients = [
     last_name: 'Sy',
     contact_email: 'fernando.sy@goldenpacific.ph',
     phone_number: '+639183000001',
+    role: 'client',
+    status: 'inactive',
     company: 'Golden Pacific Realty',
     billing_address: '25F Pacific Tower, Makati Ave, Makati City',
     contract_start_date: '2025-01-15',
     contract_end_date: '2026-01-14',
+    rate_per_guard: 24500,
+    billing_type: 'monthly',
   },
   {
     first_name: 'Patricia',
@@ -316,10 +330,14 @@ const clients = [
     last_name: 'Chua',
     contact_email: 'patricia.chua@metroedge.ph',
     phone_number: '+639183000002',
+    role: 'client',
+    status: 'inactive',
     company: 'Metro Edge Logistics',
     billing_address: '88 Warehouse Rd, Pasig City',
     contract_start_date: '2025-03-01',
     contract_end_date: '2026-02-28',
+    rate_per_guard: 22800,
+    billing_type: 'semi_monthly',
   },
   {
     first_name: 'Roberto',
@@ -327,10 +345,14 @@ const clients = [
     last_name: 'Ang',
     contact_email: 'roberto.ang@sunrisemall.ph',
     phone_number: '+639183000003',
+    role: 'client',
+    status: 'active',
     company: 'Sunrise Mall Corp',
     billing_address: 'Sunrise Mall, Commonwealth Ave, Quezon City',
     contract_start_date: '2025-06-01',
     contract_end_date: '2026-05-31',
+    rate_per_guard: 26250,
+    billing_type: 'semi_monthly',
   },
   {
     first_name: 'Diana',
@@ -338,10 +360,14 @@ const clients = [
     last_name: 'Ong',
     contact_email: 'diana.ong@vistahomes.ph',
     phone_number: '+639183000004',
+    role: 'client',
+    status: 'active',
     company: 'Vista Homes Development',
     billing_address: '12 Lakeside Dr, Taguig City',
     contract_start_date: '2025-08-01',
     contract_end_date: '2026-07-31',
+    rate_per_guard: 23800,
+    billing_type: 'monthly',
   },
   {
     first_name: 'Henry',
@@ -349,26 +375,28 @@ const clients = [
     last_name: 'Lao',
     contact_email: 'henry.lao@primetech.ph',
     phone_number: '+639183000005',
+    role: 'client',
+    status: 'active',
     company: 'PrimeTech Solutions',
     billing_address: '9F Innovation Hub, BGC, Taguig City',
     contract_start_date: '2025-10-01',
     contract_end_date: '2026-09-30',
+    rate_per_guard: 27500,
+    billing_type: 'monthly',
   },
 ];
-
-// ─── Helpers ─────────────────────────────────────────────────
 
 let employeeCounter = 0;
 let adminCounter = 0;
 
 function generateEmployeeId(role) {
   if (role === 'admin') {
-    adminCounter++;
+    adminCounter += 1;
     return `AD-${String(adminCounter).padStart(5, '0')}`;
-  } else {
-    employeeCounter++;
-    return `PG-${String(employeeCounter).padStart(5, '0')}`;
   }
+
+  employeeCounter += 1;
+  return `PG-${String(employeeCounter).padStart(5, '0')}`;
 }
 
 async function createAuthUser(email, password) {
@@ -378,7 +406,10 @@ async function createAuthUser(email, password) {
     email_confirm: true,
   });
 
-  if (error) throw new Error(`Auth user creation failed for ${email}: ${error.message}`);
+  if (error) {
+    throw new Error(`Auth user creation failed for ${email}: ${error.message}`);
+  }
+
   return data.user.id;
 }
 
@@ -391,20 +422,19 @@ async function insertProfile(id, userData) {
     contact_email: userData.contact_email,
     phone_number: userData.phone_number,
     role: userData.role || 'employee',
-    status: 'active',
+    status: userData.status || 'active',
     avatar_url: userData.avatar_url || null,
   });
 
-  if (error) throw new Error(`Profile insert failed for ${userData.contact_email}: ${error.message}`);
+  if (error) {
+    throw new Error(`Profile insert failed for ${userData.contact_email}: ${error.message}`);
+  }
 }
 
-// ─── Main Seed Function ─────────────────────────────────────
-
 async function seed() {
-  console.log('🌱 Starting user seed...\n');
+  console.log('Starting user seed...\n');
 
-  // --- Admins ---
-  console.log('👔 Seeding admins...');
+  console.log('Seeding admins...');
   for (const admin of admins) {
     const id = await createAuthUser(admin.contact_email, DEFAULT_PASSWORD);
     await insertProfile(id, admin);
@@ -413,18 +443,20 @@ async function seed() {
       id,
       employee_id_number: generateEmployeeId('admin'),
       position: admin.position,
-      hire_date: new Date().toISOString().split('T')[0],
+      hire_date: admin.hire_date,
       base_salary: null,
       pay_frequency: null,
-      employment_type: 'regular'
+      employment_type: 'regular',
     });
 
-    if (error) throw new Error(`Employee insert failed for ${admin.contact_email}: ${error.message}`);
-    console.log(`   ✓ ${admin.position}: ${admin.first_name} ${admin.last_name}`);
+    if (error) {
+      throw new Error(`Employee insert failed for ${admin.contact_email}: ${error.message}`);
+    }
+
+    console.log(`  OK admin: ${admin.position} - ${admin.first_name} ${admin.last_name}`);
   }
 
-  // --- Employees ---
-  console.log('\n🛡️  Seeding employees...');
+  console.log('\nSeeding employees...');
   for (const emp of employees) {
     const id = await createAuthUser(emp.contact_email, DEFAULT_PASSWORD);
     await insertProfile(id, { ...emp, role: 'employee' });
@@ -433,7 +465,7 @@ async function seed() {
       id,
       employee_id_number: generateEmployeeId('employee'),
       position: emp.position,
-      hire_date: new Date().toISOString().split('T')[0],
+      hire_date: emp.hire_date,
       base_salary: emp.base_salary,
       pay_frequency: emp.pay_frequency,
       employment_type: emp.employment_type || 'regular',
@@ -451,15 +483,17 @@ async function seed() {
       emergency_contact_number: emp.emergency_contact_number || null,
     });
 
-    if (error) throw new Error(`Employee insert failed for ${emp.contact_email}: ${error.message}`);
-    console.log(`   ✓ ${emp.position}: ${emp.first_name} ${emp.last_name}`);
+    if (error) {
+      throw new Error(`Employee insert failed for ${emp.contact_email}: ${error.message}`);
+    }
+
+    console.log(`  OK employee: ${emp.position} - ${emp.first_name} ${emp.last_name}`);
   }
 
-  // --- Clients ---
-  console.log('\n🏢 Seeding clients...');
+  console.log('\nSeeding clients...');
   for (const client of clients) {
     const id = await createAuthUser(client.contact_email, DEFAULT_PASSWORD);
-    await insertProfile(id, { ...client, role: 'client' });
+    await insertProfile(id, client);
 
     const { error } = await supabase.from('clients').insert({
       id,
@@ -467,17 +501,22 @@ async function seed() {
       billing_address: client.billing_address,
       contract_start_date: client.contract_start_date,
       contract_end_date: client.contract_end_date,
+      rate_per_guard: client.rate_per_guard,
+      billing_type: client.billing_type,
     });
 
-    if (error) throw new Error(`Client insert failed for ${client.contact_email}: ${error.message}`);
-    console.log(`   ✓ ${client.company}: ${client.first_name} ${client.last_name}`);
+    if (error) {
+      throw new Error(`Client insert failed for ${client.contact_email}: ${error.message}`);
+    }
+
+    console.log(`  OK client: ${client.company} - ${client.first_name} ${client.last_name}`);
   }
 
-  console.log('\n✅ Seed complete! 18 users created.');
-  console.log(`   Default password for all users: ${DEFAULT_PASSWORD}`);
+  console.log('\nSeed complete.');
+  console.log(`Default password for all users: ${DEFAULT_PASSWORD}`);
 }
 
 seed().catch((err) => {
-  console.error('\n❌ Seed failed:', err.message);
+  console.error('\nSeed failed:', err.message);
   process.exit(1);
 });
