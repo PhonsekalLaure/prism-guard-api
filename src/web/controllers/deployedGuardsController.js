@@ -8,8 +8,12 @@ async function getAllDeployedGuards(req, res) {
   try {
     const { page, limit } = req.pagination;
     const filters = req.filters;
+    const callerId = req.callerId;
+    const callerRole = req.callerRole;
 
-    const { guards, totalCount } = await deployedGuardsService.getAllDeployedGuards(page, limit, filters);
+    const { guards, totalCount } = await deployedGuardsService.getAllDeployedGuards(
+      page, limit, filters, callerId, callerRole
+    );
 
     return res.json(formatPaginatedResponse(guards, totalCount, page, limit));
   } catch (err) {
@@ -24,7 +28,10 @@ async function getAllDeployedGuards(req, res) {
  */
 async function getDeployedGuardsStats(req, res) {
   try {
-    const stats = await deployedGuardsService.getDeployedGuardsStats();
+    const callerId = req.callerId;
+    const callerRole = req.callerRole;
+
+    const stats = await deployedGuardsService.getDeployedGuardsStats(callerId, callerRole);
     return res.json(stats);
   } catch (err) {
     console.error('[getDeployedGuardsStats Error]:', err);
@@ -53,3 +60,4 @@ module.exports = {
   getDeployedGuardsStats,
   getDeployedGuardDetails,
 };
+

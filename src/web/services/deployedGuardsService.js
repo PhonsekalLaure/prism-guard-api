@@ -3,33 +3,21 @@ const { getPaginationRange } = require('@utils/pagination');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Derive shift label from an array of schedule rows.
- * Returns the label of the first active schedule found, or 'Unscheduled'.
- */
 function deriveShiftLabel(schedules = []) {
   const active = schedules.find(s => s.is_active !== false);
   if (!active) return 'Unscheduled';
 
   const { shift_start, shift_end } = active;
-  // Normalize HH:MM from "HH:MM:SS" strings returned by Postgres
   const fmt = (t = '') => t.slice(0, 5);
-
   const start = fmt(shift_start);
   const end = fmt(shift_end);
 
-  // Map well-known shift windows to labels
   if (start === '06:00' && end === '18:00') return 'Day (6AM-6PM)';
   if (start === '18:00' && end === '06:00') return 'Night (6PM-6AM)';
   if (start === '00:00' && end === '00:00') return '24-Hour';
-
   return `${start} – ${end}`;
 }
 
-/**
- * Map a shift label to the short key used by the filter bar.
- * 'day' | 'night' | '24hr' | null
- */
 function shiftKey(label = '') {
   if (label.startsWith('Day')) return 'day';
   if (label.startsWith('Night')) return 'night';
@@ -37,29 +25,43 @@ function shiftKey(label = '') {
   return null;
 }
 
-/**
- * Format a date string as "Since MMM DD, YYYY".
- */
 function formatSinceDate(dateStr) {
   if (!dateStr) return 'N/A';
   const d = new Date(dateStr);
   return `Since ${d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })}`;
 }
 
+/**
+ * Resolve the site IDs that belong to a given client.
+ * Used to scope queries when callerRole === 'client'.
+ * @param {string} clientId
+ * @returns {string[]} Array of site UUIDs
+ */
+async function getClientSiteIds(clientId) {
+  const { data, error } = await supabaseAdmin
+    .from('client_sites')
+    .select('id')
+    .eq('client_id', clientId);
+
+  if (error) throw error;
+  return (data || []).map(s => s.id);
+}
+
 // ─── Service Functions ────────────────────────────────────────────────────────
 
 /**
- * Fetch a paginated list of currently-deployed guards.
+ * Fetch a paginated list of deployed guards.
  *
- * The FK chain is:  deployments.employee_id → employees.id → profiles.id
- * So we join:  deployments → employees (which pulls profiles via employees)
+ * When callerRole === 'client', the query is scoped to that client's sites.
  *
- * @param {number} page
- * @param {number} limit
- * @param {Object} filters  – { search, status, shift }
+ * @param {number}  page
+ * @param {number}  limit
+ * @param {Object}  filters     – { search, status, shift }
+ * @param {string}  callerId    – profile UUID of the requester
+ * @param {string}  callerRole  – 'admin' | 'client'
  * @returns {{ guards: Array, totalCount: number }}
  */
-async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
+async function getAllDeployedGuards(page = 1, limit = 6, filters = {}, callerId, callerRole) {
   const { from, to } = getPaginationRange(page, limit);
 
   let query = supabaseAdmin
@@ -103,6 +105,17 @@ async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
     `, { count: 'exact' })
     .eq('status', 'active');
 
+  // ── Client scoping ──────────────────────────────────────────────────────────
+  // When accessed by a client user, restrict to their own sites only.
+  if (callerRole === 'client' && callerId) {
+    const siteIds = await getClientSiteIds(callerId);
+    if (siteIds.length === 0) {
+      // Client has no sites → return empty result immediately
+      return { guards: [], totalCount: 0 };
+    }
+    query = query.in('site_id', siteIds);
+  }
+
   const { data: deployments, error, count } = await query.range(from, to);
 
   if (error) {
@@ -122,7 +135,7 @@ async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
     const shiftLabel = deriveShiftLabel(schedules);
     const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
 
-    // Apply search filter post-fetch (since nested relation filtering is unreliable in PostgREST)
+    // Post-fetch search filter
     if (filters.search) {
       const s = filters.search.trim().toLowerCase();
       const matchesName = fullName.toLowerCase().includes(s);
@@ -130,7 +143,7 @@ async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
       if (!matchesName && !matchesId) return null;
     }
 
-    // Apply status filter (profile status = employment status of the guard)
+    // Post-fetch status filter (profile status = employment status)
     if (filters.status && filters.status !== 'all') {
       if ((profile.status || 'active') !== filters.status) return null;
     }
@@ -155,15 +168,15 @@ async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
       start_date: d.start_date,
       end_date: d.end_date || null,
     };
-  }).filter(Boolean); // remove nulls from post-fetch filtering
+  }).filter(Boolean);
 
-  // Apply shift filter post-fetch
+  // Post-fetch shift filter
   if (filters.shift && filters.shift !== 'all') {
     formatted = formatted.filter(g => g.shift_key === filters.shift);
   }
 
-  // If any post-fetch filter was active, the DB count is unreliable — use filtered length
-  const isFiltered = (filters.search) ||
+  const isFiltered =
+    filters.search ||
     (filters.status && filters.status !== 'all') ||
     (filters.shift && filters.shift !== 'all');
 
@@ -176,8 +189,8 @@ async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
 /**
  * Fetch detailed information for a single deployed guard by deployment ID.
  *
- * @param {string} deploymentId  – UUID of the deployment record
- * @returns {Object} Full guard + deployment details
+ * @param {string} deploymentId
+ * @returns {Object}
  */
 async function getDeployedGuardDetails(deploymentId) {
   const { data: deployment, error } = await supabaseAdmin
@@ -266,7 +279,6 @@ async function getDeployedGuardDetails(deploymentId) {
     ? emp.clearances
     : (emp.clearances ? [emp.clearances] : []);
 
-  // Compute age from date_of_birth
   let age = null;
   if (emp.date_of_birth) {
     const diff = new Date() - new Date(emp.date_of_birth);
@@ -276,7 +288,6 @@ async function getDeployedGuardDetails(deploymentId) {
   const shiftLabel = deriveShiftLabel(schedules);
 
   return {
-    // Deployment
     deployment_id: deployment.id,
     deployment_status: deployment.status,
     deployment_type: deployment.deployment_type,
@@ -286,7 +297,6 @@ async function getDeployedGuardDetails(deploymentId) {
     shift: shiftLabel,
     schedules: schedules,
 
-    // Identity
     employee_id: deployment.employee_id,
     employee_id_number: emp.employee_id_number || 'N/A',
     name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim(),
@@ -297,7 +307,6 @@ async function getDeployedGuardDetails(deploymentId) {
     contact_email: profile.contact_email || null,
     phone_number: profile.phone_number || null,
 
-    // Personal
     date_of_birth: emp.date_of_birth || null,
     age: age,
     gender: emp.gender || null,
@@ -309,18 +318,15 @@ async function getDeployedGuardDetails(deploymentId) {
     emergency_contact_name: emp.emergency_contact_name || null,
     emergency_contact_number: emp.emergency_contact_number || null,
 
-    // Employment
     position: emp.position || 'N/A',
     hire_date: emp.hire_date || null,
     employment_type: emp.employment_type || null,
 
-    // Deployment site
     site_id: site.id || null,
     site_name: site.site_name || 'N/A',
     site_address: site.site_address || 'N/A',
     company: site.clients?.company || 'N/A',
 
-    // Documents
     clearances: clearances,
   };
 }
@@ -328,20 +334,34 @@ async function getDeployedGuardDetails(deploymentId) {
 /**
  * Fetch summary statistics for the Deployed Guards dashboard.
  *
- * @returns {Object} { totalDeployed, onDuty, onLeave, tempReplaced }
+ * When callerRole === 'client', counts are scoped to that client's sites only.
+ *
+ * @param {string} callerId
+ * @param {string} callerRole
+ * @returns {{ totalDeployed, onDuty, onLeave, tempReplaced }}
  */
-async function getDeployedGuardsStats() {
-  // 1. Count all active deployments (total deployed)
-  const { count: totalDeployed, error: totalError } = await supabaseAdmin
+async function getDeployedGuardsStats(callerId, callerRole) {
+  // Resolve the site scope (null = all sites, for admin)
+  let siteIds = null;
+  if (callerRole === 'client' && callerId) {
+    siteIds = await getClientSiteIds(callerId);
+    if (siteIds.length === 0) {
+      return { totalDeployed: 0, onDuty: 0, onLeave: 0, tempReplaced: 0 };
+    }
+  }
+
+  // ── 1. Total active deployments ──────────────────────────────────────────
+  let totalQuery = supabaseAdmin
     .from('deployments')
     .select('*', { count: 'exact', head: true })
     .eq('status', 'active');
+  if (siteIds) totalQuery = totalQuery.in('site_id', siteIds);
 
+  const { count: totalDeployed, error: totalError } = await totalQuery;
   if (totalError) throw totalError;
 
-  // 2. Fetch profile statuses for all actively-deployed employees
-  //    FK: deployments.employee_id → employees.id → profiles.id
-  const { data: deployedRows, error: profileError } = await supabaseAdmin
+  // ── 2. Profile statuses for deployed guards ──────────────────────────────
+  let profileQuery = supabaseAdmin
     .from('deployments')
     .select(`
       employee_id,
@@ -352,7 +372,9 @@ async function getDeployedGuardsStats() {
       )
     `)
     .eq('status', 'active');
+  if (siteIds) profileQuery = profileQuery.in('site_id', siteIds);
 
+  const { data: deployedRows, error: profileError } = await profileQuery;
   if (profileError) throw profileError;
 
   const statuses = (deployedRows || []).map(d => {
@@ -364,13 +386,15 @@ async function getDeployedGuardsStats() {
   const onDuty = statuses.filter(s => s === 'active').length;
   const onLeave = statuses.filter(s => s === 'on-leave').length;
 
-  // 3. Count temporary replacements (deployment_type = 'reliever')
-  const { count: tempReplaced, error: replacedError } = await supabaseAdmin
+  // ── 3. Temporary replacements ─────────────────────────────────────────────
+  let replacedQuery = supabaseAdmin
     .from('deployments')
     .select('*', { count: 'exact', head: true })
     .eq('status', 'active')
     .eq('deployment_type', 'reliever');
+  if (siteIds) replacedQuery = replacedQuery.in('site_id', siteIds);
 
+  const { count: tempReplaced, error: replacedError } = await replacedQuery;
   if (replacedError) throw replacedError;
 
   return {
