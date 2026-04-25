@@ -49,10 +49,10 @@ function formatSinceDate(dateStr) {
 // ─── Service Functions ────────────────────────────────────────────────────────
 
 /**
- * Fetch a paginated list of currently-deployed guards for a client's view.
+ * Fetch a paginated list of currently-deployed guards.
  *
- * "Deployed guards" = employees that have at least one deployment with
- * status = 'active', filtered through the client's own sites.
+ * The FK chain is:  deployments.employee_id → employees.id → profiles.id
+ * So we join:  deployments → employees (which pulls profiles via employees)
  *
  * @param {number} page
  * @param {number} limit
@@ -62,7 +62,6 @@ function formatSinceDate(dateStr) {
 async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
   const { from, to } = getPaginationRange(page, limit);
 
-  // Base query: active deployments joined to their site and employee profile
   let query = supabaseAdmin
     .from('deployments')
     .select(`
@@ -72,21 +71,18 @@ async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
       end_date,
       deployment_type,
       employee_id,
-      profiles!deployments_employee_id_fkey (
-        id,
-        first_name,
-        last_name,
-        status,
-        avatar_url
-      ),
       employees!deployments_employee_id_fkey (
+        id,
         employee_id_number,
         position,
         hire_date,
-        gender,
-        date_of_birth,
-        emergency_contact_name,
-        emergency_contact_number
+        profiles (
+          id,
+          first_name,
+          last_name,
+          status,
+          avatar_url
+        )
       ),
       client_sites!inner (
         id,
@@ -107,21 +103,6 @@ async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
     `, { count: 'exact' })
     .eq('status', 'active');
 
-  // Search: match against employee name stored in profiles
-  if (filters.search) {
-    const s = filters.search.trim();
-    query = query.or(
-      `profiles.first_name.ilike.%${s}%,profiles.last_name.ilike.%${s}%,employees.employee_id_number.ilike.%${s}%`
-    );
-  }
-
-  // Deployment status filter (e.g., 'on-leave', 'replaced')
-  // The profiles.status tracks employment status; deployment.status tracks assignment status.
-  // We interpret the UI 'status' filter as profiles.status for consistency with the design.
-  if (filters.status && filters.status !== 'all') {
-    query = query.eq('profiles.status', filters.status);
-  }
-
   const { data: deployments, error, count } = await query.range(from, to);
 
   if (error) {
@@ -132,20 +113,33 @@ async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
 
   const raw = deployments || [];
 
-  // Post-process and apply shift filter (easier than deep Supabase filter on nested relation)
   let formatted = raw.map(d => {
-    const profile = Array.isArray(d.profiles) ? d.profiles[0] : (d.profiles || {});
     const emp = Array.isArray(d.employees) ? d.employees[0] : (d.employees || {});
+    const profile = Array.isArray(emp.profiles) ? emp.profiles[0] : (emp.profiles || {});
     const site = Array.isArray(d.client_sites) ? d.client_sites[0] : (d.client_sites || {});
     const schedules = Array.isArray(d.schedules) ? d.schedules : (d.schedules ? [d.schedules] : []);
 
     const shiftLabel = deriveShiftLabel(schedules);
+    const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
+
+    // Apply search filter post-fetch (since nested relation filtering is unreliable in PostgREST)
+    if (filters.search) {
+      const s = filters.search.trim().toLowerCase();
+      const matchesName = fullName.toLowerCase().includes(s);
+      const matchesId = (emp.employee_id_number || '').toLowerCase().includes(s);
+      if (!matchesName && !matchesId) return null;
+    }
+
+    // Apply status filter (profile status = employment status of the guard)
+    if (filters.status && filters.status !== 'all') {
+      if ((profile.status || 'active') !== filters.status) return null;
+    }
 
     return {
       id: d.id,
       employee_id: d.employee_id,
       employee_id_number: emp.employee_id_number || 'N/A',
-      name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim(),
+      name: fullName,
       initials: `${profile.first_name?.[0] || ''}${profile.last_name?.[0] || ''}`.toUpperCase(),
       avatar_url: profile.avatar_url || null,
       status: profile.status || 'active',
@@ -161,16 +155,21 @@ async function getAllDeployedGuards(page = 1, limit = 6, filters = {}) {
       start_date: d.start_date,
       end_date: d.end_date || null,
     };
-  });
+  }).filter(Boolean); // remove nulls from post-fetch filtering
 
-  // Apply shift filter post-fetch (schedules are nested)
+  // Apply shift filter post-fetch
   if (filters.shift && filters.shift !== 'all') {
     formatted = formatted.filter(g => g.shift_key === filters.shift);
   }
 
+  // If any post-fetch filter was active, the DB count is unreliable — use filtered length
+  const isFiltered = (filters.search) ||
+    (filters.status && filters.status !== 'all') ||
+    (filters.shift && filters.shift !== 'all');
+
   return {
     guards: formatted,
-    totalCount: filters.shift && filters.shift !== 'all' ? formatted.length : (count || 0),
+    totalCount: isFiltered ? formatted.length : (count || 0),
   };
 }
 
@@ -191,17 +190,8 @@ async function getDeployedGuardDetails(deploymentId) {
       deployment_type,
       deployment_order_url,
       employee_id,
-      profiles!deployments_employee_id_fkey (
-        id,
-        first_name,
-        middle_name,
-        last_name,
-        contact_email,
-        phone_number,
-        status,
-        avatar_url
-      ),
       employees!deployments_employee_id_fkey (
+        id,
         employee_id_number,
         position,
         hire_date,
@@ -215,6 +205,16 @@ async function getDeployedGuardDetails(deploymentId) {
         employment_type,
         emergency_contact_name,
         emergency_contact_number,
+        profiles (
+          id,
+          first_name,
+          middle_name,
+          last_name,
+          contact_email,
+          phone_number,
+          status,
+          avatar_url
+        ),
         clearances (
           id,
           clearance_type,
@@ -250,12 +250,12 @@ async function getDeployedGuardDetails(deploymentId) {
     throw err;
   }
 
-  const profile = Array.isArray(deployment.profiles)
-    ? deployment.profiles[0]
-    : (deployment.profiles || {});
   const emp = Array.isArray(deployment.employees)
     ? deployment.employees[0]
     : (deployment.employees || {});
+  const profile = Array.isArray(emp.profiles)
+    ? emp.profiles[0]
+    : (emp.profiles || {});
   const site = Array.isArray(deployment.client_sites)
     ? deployment.client_sites[0]
     : (deployment.client_sites || {});
@@ -340,25 +340,29 @@ async function getDeployedGuardsStats() {
   if (totalError) throw totalError;
 
   // 2. Fetch profile statuses for all actively-deployed employees
-  const { data: deployedProfiles, error: profileError } = await supabaseAdmin
+  //    FK: deployments.employee_id → employees.id → profiles.id
+  const { data: deployedRows, error: profileError } = await supabaseAdmin
     .from('deployments')
     .select(`
       employee_id,
-      profiles!deployments_employee_id_fkey (
-        status
+      employees!deployments_employee_id_fkey (
+        profiles (
+          status
+        )
       )
     `)
     .eq('status', 'active');
 
   if (profileError) throw profileError;
 
-  const profiles = (deployedProfiles || []).map(d => {
-    const p = Array.isArray(d.profiles) ? d.profiles[0] : (d.profiles || {});
-    return p.status || 'active';
+  const statuses = (deployedRows || []).map(d => {
+    const emp = Array.isArray(d.employees) ? d.employees[0] : (d.employees || {});
+    const profile = Array.isArray(emp.profiles) ? emp.profiles[0] : (emp.profiles || {});
+    return profile.status || 'active';
   });
 
-  const onDuty = profiles.filter(s => s === 'active').length;
-  const onLeave = profiles.filter(s => s === 'on-leave').length;
+  const onDuty = statuses.filter(s => s === 'active').length;
+  const onLeave = statuses.filter(s => s === 'on-leave').length;
 
   // 3. Count temporary replacements (deployment_type = 'reliever')
   const { count: tempReplaced, error: replacedError } = await supabaseAdmin
