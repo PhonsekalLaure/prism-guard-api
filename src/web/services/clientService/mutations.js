@@ -8,6 +8,7 @@ const {
   toProperCase,
   normalizeClientSites,
 } = require('./helpers');
+const employeeService = require('@services/employeeService');
 
 async function createClient(data) {
   const firstName = toProperCase(data.firstName);
@@ -18,6 +19,9 @@ async function createClient(data) {
   const billingType = (data.billingType || 'semi_monthly').toLowerCase();
   const mobile = normalizeMobileNumber(data.mobile, { required: true, fieldLabel: 'Mobile number' });
   const normalizedSites = normalizeClientSites(data.sites);
+  const initialDeployment = data.initialDeployment && typeof data.initialDeployment === 'object'
+    ? data.initialDeployment
+    : null;
 
   const allowedBillingTypes = new Set(['semi_monthly', 'monthly', 'weekly']);
   if (!allowedBillingTypes.has(billingType)) {
@@ -41,6 +45,7 @@ async function createClient(data) {
   }
 
   let userId = null;
+  const createdInitialDeployments = [];
 
   try {
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
@@ -75,20 +80,70 @@ async function createClient(data) {
         billing_address: data.billingAddress || null,
         contract_start_date: data.contractStartDate || null,
         contract_end_date: data.contractEndDate || null,
+        contract_url: data.contractUrl || null,
         rate_per_guard: parsedRatePerGuard,
         billing_type: billingType,
       }]);
 
     if (clientError) throw clientError;
 
+    let createdSites = [];
     if (normalizedSites.length > 0) {
       const siteRows = normalizedSites.map((site) => ({ ...site, client_id: userId }));
-      const { error: sitesError } = await supabaseAdmin.from('client_sites').insert(siteRows);
+      const { data: insertedSites, error: sitesError } = await supabaseAdmin
+        .from('client_sites')
+        .insert(siteRows)
+        .select('id, site_name, site_address, latitude, longitude, geofence_radius_meters');
       if (sitesError) throw sitesError;
+      createdSites = insertedSites || [];
     }
 
-    return { userId };
+    if (Array.isArray(initialDeployment?.employeeIds) && initialDeployment.employeeIds.length > 0) {
+      const siteIndex = Number(initialDeployment.siteIndex);
+      if (!Number.isInteger(siteIndex) || siteIndex < 0 || siteIndex >= createdSites.length) {
+        throw buildBadRequestError('Initial deployment requires a valid selected site.');
+      }
+
+      for (const employeeId of initialDeployment.employeeIds) {
+        const deploymentResult = await employeeService.deployEmployee(employeeId, {
+          siteId: createdSites[siteIndex].id,
+          baseSalary: initialDeployment.baseSalary,
+          contractStartDate: initialDeployment.contractStartDate || data.contractStartDate || null,
+          contractEndDate: initialDeployment.contractEndDate || data.contractEndDate || null,
+          daysOfWeek: initialDeployment.daysOfWeek,
+          shiftStart: initialDeployment.shiftStart,
+          shiftEnd: initialDeployment.shiftEnd,
+        });
+        createdInitialDeployments.push({
+          employeeId,
+          ...deploymentResult,
+        });
+      }
+    }
+
+    return { userId, sites: createdSites };
   } catch (err) {
+    for (const deployment of createdInitialDeployments.reverse()) {
+      if (deployment.deployment_id) {
+        await supabaseAdmin
+          .from('deployments')
+          .delete()
+          .eq('id', deployment.deployment_id);
+      }
+      if (deployment.contract_id) {
+        await supabaseAdmin
+          .from('employee_contracts')
+          .delete()
+          .eq('id', deployment.contract_id);
+      }
+      if (deployment.previous_base_salary !== undefined) {
+        await supabaseAdmin
+          .from('employees')
+          .update({ base_salary: deployment.previous_base_salary })
+          .eq('id', deployment.employeeId);
+      }
+    }
+
     if (userId) {
       await rollbackProvisionedUser(supabaseAdmin, userId, 'createClient');
     }
@@ -156,6 +211,7 @@ async function updateClient(id, data) {
 
   if (data.contractStartDate !== undefined) clientUpdates.contract_start_date = nextContractStartDate;
   if (data.contractEndDate !== undefined) clientUpdates.contract_end_date = nextContractEndDate;
+  if (data.contractUrl !== undefined) clientUpdates.contract_url = data.contractUrl || null;
   if (nextRatePerGuard !== undefined) clientUpdates.rate_per_guard = nextRatePerGuard;
   if (data.billingType !== undefined) clientUpdates.billing_type = data.billingType ? data.billingType.toLowerCase() : null;
 

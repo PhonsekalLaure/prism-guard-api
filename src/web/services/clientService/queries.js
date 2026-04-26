@@ -7,6 +7,25 @@ const {
   getClientInitials,
 } = require('./helpers');
 
+function calculateDistanceKm(fromLat, fromLng, toLat, toLng) {
+  if ([fromLat, fromLng, toLat, toLng].some((value) => value === null || value === undefined || value === '')) {
+    return null;
+  }
+
+  const toRadians = (degrees) => (Number(degrees) * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(Number(toLat) - Number(fromLat));
+  const dLng = toRadians(Number(toLng) - Number(fromLng));
+  const lat1 = toRadians(fromLat);
+  const lat2 = toRadians(toLat);
+
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadiusKm * c;
+}
+
 async function getAllClients(page = 1, limit = 6, filters = null) {
   const { from, to } = getPaginationRange(page, limit);
 
@@ -24,6 +43,7 @@ async function getAllClients(page = 1, limit = 6, filters = null) {
         billing_address,
         contract_start_date,
         contract_end_date,
+        contract_url,
         rate_per_guard,
         billing_type
       )
@@ -62,6 +82,7 @@ async function getAllClients(page = 1, limit = 6, filters = null) {
       status: p.status,
       initials: getClientInitials(client.company, p.first_name, p.last_name),
       contract_status: getContractStatus(client.contract_start_date, client.contract_end_date),
+      contract_url: client.contract_url || null,
       rate_per_guard: client.rate_per_guard,
       billing_type: client.billing_type,
       guard_count: 0,
@@ -91,6 +112,7 @@ async function getClientDetails(id) {
         billing_address,
         contract_start_date,
         contract_end_date,
+        contract_url,
         rate_per_guard,
         billing_type,
         client_sites (
@@ -189,6 +211,7 @@ async function getClientDetails(id) {
     billing_address: client.billing_address,
     contract_start_date: client.contract_start_date,
     contract_end_date: client.contract_end_date,
+    contract_url: client.contract_url || null,
     contract_status: getContractStatus(client.contract_start_date, client.contract_end_date),
     rate_per_guard: client.rate_per_guard,
     billing_type: client.billing_type,
@@ -234,18 +257,36 @@ async function getClientsList() {
   return clients;
 }
 
-async function getAllSitesList() {
-  const { data: sites, error } = await supabaseAdmin
-    .from('client_sites')
+async function getAllSitesList(options = {}) {
+  const parsedLatitude = options.latitude !== undefined && options.latitude !== ''
+    ? Number(options.latitude)
+    : null;
+  const parsedLongitude = options.longitude !== undefined && options.longitude !== ''
+    ? Number(options.longitude)
+    : null;
+  const employeeLatitude = Number.isNaN(parsedLatitude) ? null : parsedLatitude;
+  const employeeLongitude = Number.isNaN(parsedLongitude) ? null : parsedLongitude;
+
+  const { data: profiles, error } = await supabaseAdmin
+    .from('profiles')
     .select(`
       id,
-      site_name,
-      site_address,
-      client_id,
-      clients ( company )
+      clients!inner (
+        id,
+        company,
+        client_sites!inner (
+          id,
+          site_name,
+          site_address,
+          client_id,
+          is_active,
+          latitude,
+          longitude
+        )
+      )
     `)
-    .eq('is_active', true)
-    .order('site_name', { ascending: true });
+    .eq('role', 'client')
+    .eq('status', 'active');
 
   if (error) {
     const err = new Error(error.message);
@@ -253,7 +294,43 @@ async function getAllSitesList() {
     throw err;
   }
 
-  return sites;
+  return (profiles || [])
+    .flatMap((profile) => {
+      const client = Array.isArray(profile.clients) ? profile.clients[0] : profile.clients;
+      const sites = Array.isArray(client?.client_sites) ? client.client_sites : [];
+
+      return sites
+        .filter((site) => site.is_active)
+        .map((site) => ({
+          id: site.id,
+          site_name: site.site_name,
+          site_address: site.site_address,
+          client_id: site.client_id,
+          latitude: site.latitude,
+          longitude: site.longitude,
+          distance_km: (() => {
+            const distance = calculateDistanceKm(employeeLatitude, employeeLongitude, site.latitude, site.longitude);
+            return distance == null ? null : Number(distance.toFixed(2));
+          })(),
+          clients: {
+            company: client?.company || null,
+          },
+        }));
+    })
+    .sort((a, b) => {
+      const aHasDistance = a.distance_km != null;
+      const bHasDistance = b.distance_km != null;
+
+      if (aHasDistance && bHasDistance && a.distance_km !== b.distance_km) {
+        return a.distance_km - b.distance_km;
+      }
+
+      if (aHasDistance !== bHasDistance) {
+        return aHasDistance ? -1 : 1;
+      }
+
+      return a.site_name.localeCompare(b.site_name);
+    });
 }
 
 module.exports = {

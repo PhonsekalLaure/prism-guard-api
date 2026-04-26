@@ -1,5 +1,29 @@
 const clientService = require('@services/clientService');
 const { formatPaginatedResponse } = require('@utils/pagination');
+const { uploadBufferToCloudinary } = require('../../config/cloudinary');
+
+function parseJsonField(value) {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeClientPayload(body = {}) {
+  const data = {};
+
+  Object.keys(body).forEach((key) => {
+    const rawValue = parseJsonField(body[key]);
+    data[key] = typeof rawValue === 'string' ? rawValue.trim() : rawValue;
+  });
+
+  return data;
+}
 
 /**
  * GET /api/web/clients
@@ -82,11 +106,14 @@ async function createClient(req, res) {
       });
     }
 
-    const data = {};
-    // Trim string inputs
-    Object.keys(req.body).forEach(key => {
-      data[key] = typeof req.body[key] === 'string' ? req.body[key].trim() : req.body[key];
-    });
+    const data = normalizeClientPayload(req.body);
+    const files = req.files || [];
+
+    for (const file of files) {
+      if (file.fieldname === 'contractUrl') {
+        data.contractUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/contracts');
+      }
+    }
 
     // Call service to create user in DB
     const { userId } = await clientService.createClient(data);
@@ -105,12 +132,14 @@ async function createClient(req, res) {
 async function updateClient(req, res) {
   try {
     const { id } = req.params;
-    const data = {};
+    const data = normalizeClientPayload(req.body);
+    const files = req.files || [];
 
-    // Trim string inputs
-    Object.keys(req.body).forEach(key => {
-      data[key] = typeof req.body[key] === 'string' ? req.body[key].trim() : req.body[key];
-    });
+    for (const file of files) {
+      if (file.fieldname === 'contractUrl') {
+        data.contractUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/contracts');
+      }
+    }
 
     await clientService.updateClient(id, data);
 
@@ -127,7 +156,7 @@ async function updateClient(req, res) {
  */
 async function getAllSitesList(req, res) {
   try {
-    const sites = await clientService.getAllSitesList();
+    const sites = await clientService.getAllSitesList(req.query || {});
     return res.json(sites);
   } catch (err) {
     console.error('[getAllSitesList Error]:', err);

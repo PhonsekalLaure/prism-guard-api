@@ -6,7 +6,11 @@ function buildBadRequestError(message) {
 
 function normalizeMobileNumber(rawMobile, options = {}) {
   const { required = true, fieldLabel = 'Mobile number' } = options;
-  const digits = (rawMobile || '').replace(/\D/g, '');
+  if (rawMobile !== null && rawMobile !== undefined && typeof rawMobile !== 'string' && typeof rawMobile !== 'number') {
+    throw buildBadRequestError(`${fieldLabel} must be a text value.`);
+  }
+
+  const digits = String(rawMobile || '').replace(/\D/g, '');
 
   if (!digits) {
     if (required) {
