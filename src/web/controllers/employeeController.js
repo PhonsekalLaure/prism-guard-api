@@ -203,9 +203,12 @@ async function deployEmployee(req, res) {
     } = req.body;
     const files = req.files || [];
     let deploymentOrderUrl = null;
+    let contractDocUrl = null;
 
     for (const file of files) {
-      if (file.fieldname === 'document_deployment_order') {
+      if (file.fieldname === 'document_contract') {
+        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts');
+      } else if (file.fieldname === 'document_deployment_order') {
         deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders');
       }
     }
@@ -222,6 +225,7 @@ async function deployEmployee(req, res) {
       daysOfWeek,
       shiftStart,
       shiftEnd,
+      contractDocUrl,
       deploymentOrderUrl
     });
 
