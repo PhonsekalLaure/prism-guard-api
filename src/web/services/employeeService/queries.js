@@ -4,6 +4,38 @@ const {
   applySupabaseFilters,
 } = require('./shared');
 
+const TALL_GUARD_MIN_HEIGHT_CM = 170;
+const EXPERIENCED_GUARD_MIN_YEARS = 2;
+
+function toBoolean(value) {
+  return value === true || value === 'true';
+}
+
+function calculateYearsExperience(hireDate) {
+  if (!hireDate) return 0;
+  const diffMs = new Date() - new Date(hireDate);
+  return diffMs / (1000 * 60 * 60 * 24 * 365.25);
+}
+
+function calculateDistanceKm(fromLat, fromLng, toLat, toLng) {
+  if ([fromLat, fromLng, toLat, toLng].some((value) => value === null || value === undefined || value === '')) {
+    return null;
+  }
+
+  const toRadians = (degrees) => (Number(degrees) * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRadians(Number(toLat) - Number(fromLat));
+  const dLng = toRadians(Number(toLng) - Number(fromLng));
+  const lat1 = toRadians(fromLat);
+  const lat2 = toRadians(toLat);
+
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadiusKm * c;
+}
+
 async function getAllEmployees(page = 1, limit = 6, filters = null) {
   const clientFilter = filters?.client || 'all';
   const shouldPostFilterByActiveDeployment = clientFilter && clientFilter !== 'all';
@@ -324,7 +356,18 @@ async function getEmployeeStats() {
   };
 }
 
-async function getDeployableEmployees() {
+async function getDeployableEmployees(options = {}) {
+  const parsedSiteLatitude = options.siteLatitude !== undefined && options.siteLatitude !== ''
+    ? Number(options.siteLatitude)
+    : null;
+  const parsedSiteLongitude = options.siteLongitude !== undefined && options.siteLongitude !== ''
+    ? Number(options.siteLongitude)
+    : null;
+  const siteLatitude = Number.isNaN(parsedSiteLatitude) ? null : parsedSiteLatitude;
+  const siteLongitude = Number.isNaN(parsedSiteLongitude) ? null : parsedSiteLongitude;
+  const tallOnly = toBoolean(options.tallOnly);
+  const experiencedOnly = toBoolean(options.experiencedOnly);
+
   const { data, error } = await supabaseAdmin
     .from('profiles')
     .select(`
@@ -335,6 +378,11 @@ async function getDeployableEmployees() {
       employees!inner (
         employee_id_number,
         position,
+        hire_date,
+        base_salary,
+        height_cm,
+        latitude,
+        longitude,
         deployments!deployments_employee_id_fkey (
           status
         )
@@ -362,6 +410,13 @@ async function getDeployableEmployees() {
     })
     .map((profile) => {
       const employee = Array.isArray(profile.employees) ? profile.employees[0] : profile.employees;
+      const yearsExperience = calculateYearsExperience(employee?.hire_date);
+      const distanceKm = calculateDistanceKm(
+        siteLatitude,
+        siteLongitude,
+        employee?.latitude,
+        employee?.longitude
+      );
 
       return {
         id: profile.id,
@@ -369,9 +424,38 @@ async function getDeployableEmployees() {
         name: `${profile.first_name} ${profile.last_name}`.trim(),
         position: employee?.position || 'N/A',
         status: profile.status,
+        height_cm: employee?.height_cm ?? null,
+        hire_date: employee?.hire_date || null,
+        years_experience: Number(yearsExperience.toFixed(1)),
+        distance_km: distanceKm == null ? null : Number(distanceKm.toFixed(2)),
+        base_salary: employee?.base_salary ?? null,
       };
     })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter((employee) => {
+      if (tallOnly && (!(employee.height_cm >= TALL_GUARD_MIN_HEIGHT_CM))) {
+        return false;
+      }
+
+      if (experiencedOnly && employee.years_experience < EXPERIENCED_GUARD_MIN_YEARS) {
+        return false;
+      }
+
+      return true;
+    })
+    .sort((a, b) => {
+      const aHasDistance = a.distance_km != null;
+      const bHasDistance = b.distance_km != null;
+
+      if (aHasDistance && bHasDistance && a.distance_km !== b.distance_km) {
+        return a.distance_km - b.distance_km;
+      }
+
+      if (aHasDistance !== bHasDistance) {
+        return aHasDistance ? -1 : 1;
+      }
+
+      return a.name.localeCompare(b.name);
+    });
 }
 
 async function getNextEmployeeId() {

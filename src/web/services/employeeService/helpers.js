@@ -3,8 +3,11 @@ const {
   buildBadRequestError,
 } = require('./shared');
 
-function toProperCase(str) {
+function toProperCase(str, fieldLabel = 'Value') {
   if (!str) return str;
+  if (typeof str !== 'string') {
+    throw buildBadRequestError(`${fieldLabel} must be a text value.`);
+  }
   return str.toLowerCase().replace(/\b\w/g, (s) => s.toUpperCase());
 }
 
@@ -49,7 +52,11 @@ function normalizeContractDates(startDate, endDate, fallbackStartDate = null) {
 }
 
 function normalizeSchedule(schedule = {}) {
-  const rawDays = Array.isArray(schedule.daysOfWeek) ? schedule.daysOfWeek : [];
+  const rawDays = Array.isArray(schedule.daysOfWeek)
+    ? schedule.daysOfWeek
+    : (schedule.daysOfWeek !== undefined && schedule.daysOfWeek !== null && schedule.daysOfWeek !== ''
+      ? [schedule.daysOfWeek]
+      : []);
   const daysOfWeek = [...new Set(
     rawDays
       .map((day) => Number(day))

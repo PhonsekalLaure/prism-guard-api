@@ -51,7 +51,7 @@ async function getEmployeeStats(req, res) {
  */
 async function getDeployableEmployees(req, res) {
   try {
-    const employees = await employeeService.getDeployableEmployees();
+    const employees = await employeeService.getDeployableEmployees(req.query || {});
     return res.json(employees);
   } catch (err) {
     const status = err.status || 500;
@@ -122,6 +122,11 @@ async function createEmployee(req, res) {
       {
         contractDocUrl,
         contractEndDate: data.contractEndDate || null,
+        deploymentStartDate: data.deploymentStartDate || null,
+        deploymentEndDate: data.deploymentEndDate || null,
+        daysOfWeek: data.daysOfWeek,
+        shiftStart: data.shiftStart || null,
+        shiftEnd: data.shiftEnd || null,
         deploymentOrderUrl,
         initialSiteId: data.initialSiteId || null,
       }
@@ -195,6 +200,7 @@ async function deployEmployee(req, res) {
     const {
       siteId,
       ratePerGuard,
+      baseSalary,
       contractStartDate,
       contractEndDate,
       daysOfWeek,
@@ -220,6 +226,7 @@ async function deployEmployee(req, res) {
     const result = await employeeService.deployEmployee(id, {
       siteId,
       ratePerGuard,
+      baseSalary,
       contractStartDate,
       contractEndDate,
       daysOfWeek,
@@ -237,6 +244,54 @@ async function deployEmployee(req, res) {
   }
 }
 
+async function transferEmployeeAssignment(req, res) {
+  try {
+    const { id } = req.params;
+    const {
+      siteId,
+      ratePerGuard,
+      contractStartDate,
+      contractEndDate,
+      daysOfWeek,
+      shiftStart,
+      shiftEnd
+    } = req.body;
+    const files = req.files || [];
+    let deploymentOrderUrl = null;
+    let contractDocUrl = null;
+
+    for (const file of files) {
+      if (file.fieldname === 'document_contract') {
+        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts');
+      } else if (file.fieldname === 'document_deployment_order') {
+        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders');
+      }
+    }
+
+    if (!siteId) {
+      return res.status(400).json({ error: 'siteId is required' });
+    }
+
+    const result = await employeeService.transferEmployeeAssignment(id, {
+      siteId,
+      ratePerGuard,
+      contractStartDate,
+      contractEndDate,
+      daysOfWeek,
+      shiftStart,
+      shiftEnd,
+      contractDocUrl,
+      deploymentOrderUrl
+    });
+
+    return res.json({ message: 'Employee transferred successfully', data: result });
+  } catch (err) {
+    console.error(err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to transfer employee assignment' });
+  }
+}
+
 module.exports = {
   getAllEmployees,
   getDeployableEmployees,
@@ -245,5 +300,6 @@ module.exports = {
   createEmployee,
   updateEmployee,
   deployEmployee,
+  transferEmployeeAssignment,
   getNextEmployeeId
 };
