@@ -76,6 +76,7 @@ create table public.clients (
   contract_end_date date null,
   rate_per_guard numeric null,
   billing_type text null default 'semi_monthly'::text,
+  contract_url text null,
   constraint clients_pkey primary key (id),
   constraint clients_id_fkey foreign KEY (id) references profiles (id) on delete CASCADE
 ) TABLESPACE pg_default;
