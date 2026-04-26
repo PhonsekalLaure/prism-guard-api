@@ -45,6 +45,6 @@ router.get('/:id', requireRole('admin'), getEmployeeDetails);
 router.patch('/:id', upload.any(), updateEmployee);
 
 // POST /api/web/employees/:id/deploy
-router.post('/:id/deploy', deployEmployee);
+router.post('/:id/deploy', upload.any(), deployEmployee);
 
 module.exports = router;

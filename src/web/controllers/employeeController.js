@@ -164,11 +164,14 @@ async function updateEmployee(req, res) {
     const files = req.files || [];
     const clearancesData = [];
     let avatarUrl = null;
+    let deploymentOrderUrl = null;
 
     // Upload any replacement clearance documents to Cloudinary
     for (const file of files) {
       if (file.fieldname === 'avatar') {
         avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/avatars');
+      } else if (file.fieldname === 'document_deployment_order') {
+        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders');
       } else if (file.fieldname.startsWith('document_')) {
         const type = file.fieldname.replace('document_', '');
         const secureUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/documents');
@@ -176,7 +179,7 @@ async function updateEmployee(req, res) {
       }
     }
 
-    await employeeService.updateEmployee(id, data, clearancesData, avatarUrl);
+    await employeeService.updateEmployee(id, data, clearancesData, avatarUrl, deploymentOrderUrl);
 
     return res.json({ message: 'Employee updated successfully' });
   } catch (err) {
@@ -189,7 +192,23 @@ async function updateEmployee(req, res) {
 async function deployEmployee(req, res) {
   try {
     const { id } = req.params;
-    const { siteId, ratePerGuard, contractStartDate, contractEndDate } = req.body;
+    const {
+      siteId,
+      ratePerGuard,
+      contractStartDate,
+      contractEndDate,
+      daysOfWeek,
+      shiftStart,
+      shiftEnd
+    } = req.body;
+    const files = req.files || [];
+    let deploymentOrderUrl = null;
+
+    for (const file of files) {
+      if (file.fieldname === 'document_deployment_order') {
+        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders');
+      }
+    }
 
     if (!siteId) {
       return res.status(400).json({ error: 'siteId is required' });
@@ -199,7 +218,11 @@ async function deployEmployee(req, res) {
       siteId,
       ratePerGuard,
       contractStartDate,
-      contractEndDate
+      contractEndDate,
+      daysOfWeek,
+      shiftStart,
+      shiftEnd,
+      deploymentOrderUrl
     });
 
     return res.json({ message: 'Employee deployed successfully', data: result });
