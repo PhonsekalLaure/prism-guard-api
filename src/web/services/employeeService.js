@@ -138,10 +138,17 @@ async function getEmployeeDetails(id) {
         educational_level,
         employment_type,
         residential_address,
+        provincial_address,
+        place_of_birth,
+        blood_type,
+        badge_number,
+        license_number,
+        license_expiry_date,
         latitude,
         longitude,
         emergency_contact_name,
         emergency_contact_number,
+        emergency_contact_relationship,
         deployments!deployments_employee_id_fkey (
           id,
           status,
@@ -190,15 +197,34 @@ async function getEmployeeDetails(id) {
   // Compute age
   let age = null;
   if (emp.date_of_birth) {
-    const d1 = new Date();
-    const d2 = new Date(emp.date_of_birth);
-    age = new Date(d1 - d2).getFullYear() - 1970;
+    const dob = new Date(emp.date_of_birth);
+    const now = new Date();
+    age = now.getFullYear() - dob.getFullYear();
+    const m = now.getMonth() - dob.getMonth();
+    if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) {
+      age--;
+    }
   }
 
   // Prepare arrays
   const deployments = Array.isArray(emp.deployments) ? emp.deployments : (emp.deployments ? [emp.deployments] : []);
   const clearances = Array.isArray(emp.clearances) ? emp.clearances : (emp.clearances ? [emp.clearances] : []);
   const payroll = Array.isArray(emp.payroll_records) ? emp.payroll_records : (emp.payroll_records ? [emp.payroll_records] : []);
+
+  const { data: latestContract, error: contractError } = await supabaseAdmin
+    .from('employee_contracts')
+    .select('document_url, start_date, end_date, updated_at')
+    .eq('employee_id', id)
+    .order('updated_at', { ascending: false })
+    .order('start_date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (contractError) {
+    const err = new Error(contractError.message);
+    err.status = 500;
+    throw err;
+  }
 
   // Sort payroll by period end descending
   payroll.sort((a, b) => new Date(b.period_end) - new Date(a.period_end));
@@ -227,10 +253,17 @@ async function getEmployeeDetails(id) {
     height_cm: emp.height_cm,
     educational_level: emp.educational_level,
     residential_address: emp.residential_address,
+    provincial_address: emp.provincial_address,
+    place_of_birth: emp.place_of_birth,
+    blood_type: emp.blood_type,
+    badge_number: emp.badge_number,
+    license_number: emp.license_number,
+    license_expiry_date: emp.license_expiry_date,
     latitude: emp.latitude,
     longitude: emp.longitude,
     emergency_contact_name: emp.emergency_contact_name,
     emergency_contact_number: emp.emergency_contact_number,
+    emergency_contact_relationship: emp.emergency_contact_relationship,
 
     // Employment
     position: emp.position,
@@ -250,7 +283,8 @@ async function getEmployeeDetails(id) {
     // Relations
     clearances: clearances,
     payroll_records: payroll,
-    deployments: deployments
+    deployments: deployments,
+    document_url: latestContract?.document_url || null
   };
 }
 
@@ -272,8 +306,8 @@ async function getEmployeeStats() {
   const stats = {
     total: statusCounts.length,
     active: statusCounts.filter(p => p.status === 'active').length,
-    on_leave: statusCounts.filter(p => p.status === 'on-leave').length,
-    suspended: statusCounts.filter(p => p.status === 'suspended').length,
+    inactive: statusCounts.filter(p => p.status === 'inactive').length,
+    terminated: statusCounts.filter(p => p.status === 'terminated').length,
   };
 
   // 2. Get today's attendance stats
@@ -288,10 +322,65 @@ async function getEmployeeStats() {
   
   return {
     totalEmployees: stats.total,
-    onLeave: stats.on_leave,
-    absentToday: stats.total - stats.active - stats.on_leave, // Simplification: anyone not active or on-leave
-    activeOnDuty: clockInCount, // Actual clock-ins today
+    inactive: stats.inactive,
+    terminated: stats.terminated,
+    absentToday: stats.active - clockInCount,
+    activeOnDuty: clockInCount,
   };
+}
+
+/**
+ * Fetch active employees who do not have an active deployment.
+ * Used by the client-side guard deployment flow.
+ */
+async function getDeployableEmployees() {
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .select(`
+      id,
+      first_name,
+      last_name,
+      status,
+      employees!inner (
+        employee_id_number,
+        position,
+        deployments!deployments_employee_id_fkey (
+          status
+        )
+      )
+    `)
+    .eq('role', 'employee')
+    .eq('status', 'active');
+
+  if (error) {
+    const err = new Error(error.message);
+    err.status = 500;
+    throw err;
+  }
+
+  const profiles = data || [];
+
+  return profiles
+    .filter((profile) => {
+      const employee = Array.isArray(profile.employees) ? profile.employees[0] : profile.employees;
+      const deployments = Array.isArray(employee?.deployments)
+        ? employee.deployments
+        : (employee?.deployments ? [employee.deployments] : []);
+
+      return !deployments.some((deployment) => deployment.status === 'active');
+    })
+    .map((profile) => {
+      const employee = Array.isArray(profile.employees) ? profile.employees[0] : profile.employees;
+
+      return {
+        id: profile.id,
+        employee_id_number: employee?.employee_id_number || 'N/A',
+        name: `${profile.first_name} ${profile.last_name}`.trim(),
+        position: employee?.position || 'N/A',
+        status: profile.status,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**
@@ -303,9 +392,123 @@ function toProperCase(str) {
 }
 
 /**
- * Creates a new employee user, profile, employee details, and clearance records.
+ * Expiry period map for clearance types (in years). null = no expiry.
  */
-async function createEmployee(data, clearancesData, avatarUrl = null) {
+const CLEARANCE_EXPIRY_YEARS = {
+  barangay: 1,
+  police: 1,
+  nbi: 1,
+  neuro: 1,
+  drugtest: 1,
+  sg_license: 2,
+  valid_id: null,
+  resume: null,
+};
+
+function normalizeContractDates(startDate, endDate, fallbackStartDate = null) {
+  const contractStartDate = startDate || fallbackStartDate || new Date().toISOString().split('T')[0];
+  let contractEndDate = endDate || null;
+
+  if (Number.isNaN(new Date(contractStartDate).getTime())) {
+    throw buildBadRequestError('Contract start date is invalid.');
+  }
+
+  if (!contractEndDate) {
+    const defaultEndDate = new Date(contractStartDate);
+    defaultEndDate.setFullYear(defaultEndDate.getFullYear() + 1);
+    contractEndDate = defaultEndDate.toISOString().split('T')[0];
+  }
+
+  if (Number.isNaN(new Date(contractEndDate).getTime())) {
+    throw buildBadRequestError('Contract end date is invalid.');
+  }
+
+  if (new Date(contractEndDate) < new Date(contractStartDate)) {
+    throw buildBadRequestError('Contract end date cannot be earlier than contract start date.');
+  }
+
+  return {
+    contractStartDate,
+    contractEndDate,
+  };
+}
+
+async function getEmployeeProfileForDeployment(employeeId) {
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .select(`
+      id,
+      status,
+      role,
+      employees (
+        base_salary
+      )
+    `)
+    .eq('id', employeeId)
+    .eq('role', 'employee')
+    .single();
+
+  if (error || !data) {
+    const err = new Error('Employee not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (data.status === 'terminated') {
+    throw buildBadRequestError('Terminated employees cannot be deployed.');
+  }
+
+  const employee = Array.isArray(data.employees) ? data.employees[0] : data.employees;
+
+  return {
+    ...data,
+    base_salary: employee?.base_salary ?? null,
+  };
+}
+
+async function getActiveSiteAssignment(siteId) {
+  const { data, error } = await supabaseAdmin
+    .from('client_sites')
+    .select(`
+      id,
+      site_name,
+      is_active,
+      client_id,
+      clients (
+        company,
+        rate_per_guard
+      )
+    `)
+    .eq('id', siteId)
+    .single();
+
+  if (error || !data) {
+    const err = new Error('Client site not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (!data.is_active) {
+    throw buildBadRequestError('Only active client sites can receive deployments.');
+  }
+
+  return data;
+}
+
+/**
+ * Creates a new employee user, profile, employee details, clearance records,
+ * employee contract, and optionally a deployment record.
+ *
+ * @param {Object} data           - Form field values
+ * @param {Array}  clearancesData - Array of { type, url } from uploaded documents
+ * @param {string|null} avatarUrl - Cloudinary URL for the avatar image
+ * @param {Object} extras         - Additional creation options
+ * @param {string|null} extras.contractDocUrl      - Cloudinary URL for the contract document
+ * @param {string|null} extras.contractEndDate     - Admin-provided contract end date
+ * @param {string|null} extras.deploymentOrderUrl  - Cloudinary URL for the deployment order
+ * @param {string|null} extras.initialSiteId       - Client site UUID or null/floating
+ */
+async function createEmployee(data, clearancesData, avatarUrl = null, extras = {}) {
   // Normalize strings
   const firstName = toProperCase(data.firstName);
   const middleName = data.middleName ? toProperCase(data.middleName) : null;
@@ -340,6 +543,23 @@ async function createEmployee(data, clearancesData, avatarUrl = null) {
     if (hireDate < birthDate) {
       throw buildBadRequestError('Hire date cannot be earlier than date of birth.');
     }
+  }
+
+  const {
+    contractDocUrl,
+    contractEndDate,
+    deploymentOrderUrl,
+    initialSiteId,
+  } = extras;
+  const shouldCreateDeployment = !!initialSiteId;
+  const shouldCreateContract = !!(contractDocUrl || contractEndDate || shouldCreateDeployment);
+  const { contractStartDate, contractEndDate: normalizedContractEndDate } = shouldCreateContract
+    ? normalizeContractDates(data.hireDate, contractEndDate, data.hireDate)
+    : { contractStartDate: null, contractEndDate: null };
+
+  let siteAssignment = null;
+  if (shouldCreateDeployment) {
+    siteAssignment = await getActiveSiteAssignment(initialSiteId);
   }
 
   // 1. Invite auth user
@@ -392,8 +612,16 @@ async function createEmployee(data, clearancesData, avatarUrl = null) {
         height_cm: data.height ? parseFloat(data.height) : null,
         educational_level: data.educationalLevel,
         residential_address: normalizedAddress.address,
+        provincial_address: data.provincialAddress || null,
+        place_of_birth: data.placeOfBirth || null,
+        blood_type: data.bloodType || null,
+        citizenship: data.citizenship || 'Filipino',
+        badge_number: data.badgeNumber || null,
+        license_number: data.licenseNumber || null,
+        license_expiry_date: data.licenseExpiryDate || null,
         emergency_contact_name: toProperCase(data.emergencyName),
         emergency_contact_number: emergencyContactNumber,
+        emergency_contact_relationship: data.emergencyRelationship ? toProperCase(data.emergencyRelationship) : null,
         employment_type: employmentType,
         latitude: normalizedAddress.latitude,
         longitude: normalizedAddress.longitude
@@ -401,22 +629,69 @@ async function createEmployee(data, clearancesData, avatarUrl = null) {
 
     if (empError) throw empError;
 
-    // 4. Insert clearances if they exist
+    // 4. Insert clearances with auto-calculated expiry dates
     if (clearancesData && clearancesData.length > 0) {
-      const clearancesToInsert = clearancesData.map(c => ({
-        employee_id: userId,
-        clearance_type: c.type,
-        document_url: c.url,
-        issue_date: new Date().toISOString().split('T')[0], // Simplified assuming today's date
-        status: 'valid'
-      }));
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+
+      const clearancesToInsert = clearancesData.map(c => {
+        const expiryYears = CLEARANCE_EXPIRY_YEARS[c.type];
+        let expiryDate = null;
+        if (expiryYears) {
+          const expiry = new Date(today);
+          expiry.setFullYear(expiry.getFullYear() + expiryYears);
+          expiryDate = expiry.toISOString().split('T')[0];
+        }
+
+        return {
+          employee_id: userId,
+          clearance_type: c.type,
+          document_url: c.url,
+          issue_date: todayStr,
+          expiry_date: expiryDate,
+          status: 'valid'
+        };
+      });
 
       const { error: clearError } = await supabaseAdmin
         .from('clearances')
         .insert(clearancesToInsert);
 
-      if (clearError) console.error("Failed to insert clearances:", clearError);
-      // Soft fail if clearances don't insert, we still have the employee
+      if (clearError) throw clearError;
+    }
+
+    // 5. Insert employee contract record
+    if (shouldCreateContract) {
+      const { error: contractError } = await supabaseAdmin
+        .from('employee_contracts')
+        .insert([{
+          employee_id: userId,
+          contract_type: 'employment',
+          start_date: contractStartDate,
+          end_date: normalizedContractEndDate,
+          salary_at_signing: data.basicRate ? parseFloat(data.basicRate) : null,
+          rate_per_guard: siteAssignment?.clients?.rate_per_guard ?? null,
+          document_url: contractDocUrl || null,
+          status: 'active',
+        }]);
+
+      if (contractError) throw contractError;
+    }
+
+    // 6. Create deployment record if assigned to a client (not floating)
+    if (shouldCreateDeployment) {
+      const { error: deployError } = await supabaseAdmin
+        .from('deployments')
+        .insert([{
+          employee_id: userId,
+          site_id: siteAssignment.id,
+          deployment_order_url: deploymentOrderUrl || null,
+          start_date: contractStartDate,
+          end_date: normalizedContractEndDate,
+          status: 'active',
+        }]);
+
+      if (deployError) throw deployError;
     }
 
     return { userId };
@@ -467,7 +742,7 @@ async function getNextEmployeeId() {
  * @param {Object} data          - Flat object of field updates
  * @param {Array}  clearances    - Array of { type, url } for updated documents
  */
-async function updateEmployee(id, data, clearances = []) {
+async function updateEmployee(id, data, clearances = [], avatarUrl = null) {
   // ── 1. Update profiles table ──────────────────────────────────────────────
   const profilePatch = {};
   if (data.phone_number !== undefined) {
@@ -477,6 +752,8 @@ async function updateEmployee(id, data, clearances = []) {
     });
   }
   if (data.contact_email !== undefined) profilePatch.contact_email = data.contact_email || null;
+  if (data.status !== undefined) profilePatch.status = data.status;
+  if (avatarUrl) profilePatch.avatar_url = avatarUrl;
 
   if (Object.keys(profilePatch).length > 0) {
     const { error: profileError } = await supabaseAdmin
@@ -493,6 +770,13 @@ async function updateEmployee(id, data, clearances = []) {
   if (data.civil_status            !== undefined) empPatch.civil_status            = data.civil_status            || null;
   if (data.height_cm               !== undefined) empPatch.height_cm               = data.height_cm ? parseFloat(data.height_cm) : null;
   if (data.educational_level       !== undefined) empPatch.educational_level       = data.educational_level       || null;
+  if (data.citizenship             !== undefined) empPatch.citizenship             = data.citizenship             || null;
+  if (data.provincial_address      !== undefined) empPatch.provincial_address      = data.provincial_address      || null;
+  if (data.place_of_birth          !== undefined) empPatch.place_of_birth          = data.place_of_birth          || null;
+  if (data.blood_type              !== undefined) empPatch.blood_type              = data.blood_type              || null;
+  if (data.badge_number            !== undefined) empPatch.badge_number            = data.badge_number            || null;
+  if (data.license_number          !== undefined) empPatch.license_number          = data.license_number          || null;
+  if (data.license_expiry_date     !== undefined) empPatch.license_expiry_date     = data.license_expiry_date     || null;
   if (data.residential_address !== undefined || data.latitude !== undefined || data.longitude !== undefined) {
     const normalizedAddress = normalizeAddressWithCoordinates(
       data.residential_address,
@@ -519,6 +803,12 @@ async function updateEmployee(id, data, clearances = []) {
       required: false,
       fieldLabel: 'Emergency contact number',
     });
+  }
+  if (data.emergency_contact_relationship !== undefined) {
+    const relationship = (data.emergency_contact_relationship || '').trim();
+    empPatch.emergency_contact_relationship = relationship
+      ? relationship.replace(/\b\w/g, c => c.toUpperCase())
+      : null;
   }
   if (data.position        !== undefined) empPatch.position        = data.position        || null;
   if (data.employment_type !== undefined) empPatch.employment_type = (data.employment_type || '').toLowerCase() || null;
@@ -551,8 +841,74 @@ async function updateEmployee(id, data, clearances = []) {
   return { success: true };
 }
 
+/**
+ * Deploys an employee to a client site.
+ * Creates a deployment record and an employee_contract.
+ */
+async function deployEmployee(employeeId, { siteId, ratePerGuard, contractStartDate, contractEndDate }) {
+  const employeeProfile = await getEmployeeProfileForDeployment(employeeId);
+  const siteAssignment = await getActiveSiteAssignment(siteId);
+  const normalizedRatePerGuard = ratePerGuard ?? siteAssignment.clients?.rate_per_guard ?? null;
+  const {
+    contractStartDate: normalizedContractStartDate,
+    contractEndDate: normalizedContractEndDate,
+  } = normalizeContractDates(contractStartDate, contractEndDate);
+
+  // Check if already active
+  const { data: existing } = await supabaseAdmin
+    .from('deployments')
+    .select('id')
+    .eq('employee_id', employeeId)
+    .eq('status', 'active');
+    
+  if (existing && existing.length > 0) {
+    throw buildBadRequestError('Employee is already actively deployed to a site.');
+  }
+
+  // Insert employee contract first so validation failures do not leave an active deployment behind.
+  const { data: contract, error: contractError } = await supabaseAdmin
+    .from('employee_contracts')
+    .insert([{
+      employee_id: employeeId,
+      contract_type: 'employment',
+      rate_per_guard: normalizedRatePerGuard,
+      salary_at_signing: employeeProfile.base_salary,
+      start_date: normalizedContractStartDate,
+      end_date: normalizedContractEndDate,
+      status: 'active'
+    }])
+    .select('id')
+    .single();
+
+  if (contractError) throw contractError;
+
+  const { data: deployment, error: depError } = await supabaseAdmin
+    .from('deployments')
+    .insert([{
+      employee_id: employeeId,
+      site_id: siteAssignment.id,
+      start_date: normalizedContractStartDate,
+      end_date: normalizedContractEndDate,
+      status: 'active'
+    }])
+    .select('id')
+    .single();
+
+  if (depError) {
+    await supabaseAdmin
+      .from('employee_contracts')
+      .delete()
+      .eq('id', contract.id);
+    throw depError;
+  }
+
+  return { success: true, deployment_id: deployment.id };
+}
+
 module.exports = {
   getAllEmployees,
+  getDeployableEmployees,
+  deployEmployee,
   getEmployeeDetails,
   getEmployeeStats,
   createEmployee,

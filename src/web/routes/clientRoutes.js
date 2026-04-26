@@ -2,7 +2,7 @@ const express = require('express');
 const { requireAuth, requireRole } = require('@middlewares/authMiddleware');
 const paginationMiddleware = require('@middlewares/paginationMiddleware');
 const filterMiddleware = require('@middlewares/filterMiddleware');
-const { getAllClients, getClientDetails, getClientStats, getClientsList, createClient, updateClient } = require('@controllers/clientController');
+const { getAllClients, getClientDetails, getClientStats, getClientsList, getAllSitesList, createClient, updateClient } = require('@controllers/clientController');
 
 const router = express.Router();
 
@@ -20,6 +20,9 @@ router.get('/stats', getClientStats);
 
 // GET /api/web/clients/list (Must be before /:id)
 router.get('/list', getClientsList);
+
+// GET /api/web/clients/sites (Must be before /:id)
+router.get('/sites', getAllSitesList);
 
 // GET /api/web/clients/:id
 router.get('/:id', getClientDetails);

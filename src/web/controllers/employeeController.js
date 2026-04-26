@@ -47,6 +47,19 @@ async function getEmployeeStats(req, res) {
 }
 
 /**
+ * GET /api/web/employees/deployable
+ */
+async function getDeployableEmployees(req, res) {
+  try {
+    const employees = await employeeService.getDeployableEmployees();
+    return res.json(employees);
+  } catch (err) {
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message });
+  }
+}
+
+/**
  * POST /api/web/employees
  */
 async function createEmployee(req, res) {
@@ -82,12 +95,18 @@ async function createEmployee(req, res) {
 
     const files = req.files || []; // from multer
     let avatarUrl = null;
+    let contractDocUrl = null;
+    let deploymentOrderUrl = null;
 
     // 1. Process files to Cloudinary
     const clearancesData = [];
     for (const file of files) {
       if (file.fieldname === 'avatar') {
         avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/avatars');
+      } else if (file.fieldname === 'document_contract') {
+        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts');
+      } else if (file.fieldname === 'document_deployment_order') {
+        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders');
       } else if (file.fieldname.startsWith('document_')) {
         const type = file.fieldname.replace('document_', '');
         const secureUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/documents');
@@ -96,7 +115,17 @@ async function createEmployee(req, res) {
     }
 
     // 2. Call service to create user in DB
-    const { userId } = await employeeService.createEmployee(data, clearancesData, avatarUrl);
+    const { userId } = await employeeService.createEmployee(
+      data,
+      clearancesData,
+      avatarUrl,
+      {
+        contractDocUrl,
+        contractEndDate: data.contractEndDate || null,
+        deploymentOrderUrl,
+        initialSiteId: data.initialSiteId || null,
+      }
+    );
 
     return res.status(201).json({ message: 'Employee created and invited successfully', userId });
   } catch (err) {
@@ -134,17 +163,20 @@ async function updateEmployee(req, res) {
 
     const files = req.files || [];
     const clearancesData = [];
+    let avatarUrl = null;
 
     // Upload any replacement clearance documents to Cloudinary
     for (const file of files) {
-      if (file.fieldname.startsWith('document_')) {
+      if (file.fieldname === 'avatar') {
+        avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/avatars');
+      } else if (file.fieldname.startsWith('document_')) {
         const type = file.fieldname.replace('document_', '');
         const secureUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/documents');
         clearancesData.push({ type, url: secureUrl });
       }
     }
 
-    await employeeService.updateEmployee(id, data, clearancesData);
+    await employeeService.updateEmployee(id, data, clearancesData, avatarUrl);
 
     return res.json({ message: 'Employee updated successfully' });
   } catch (err) {
@@ -154,11 +186,37 @@ async function updateEmployee(req, res) {
   }
 }
 
+async function deployEmployee(req, res) {
+  try {
+    const { id } = req.params;
+    const { siteId, ratePerGuard, contractStartDate, contractEndDate } = req.body;
+
+    if (!siteId) {
+      return res.status(400).json({ error: 'siteId is required' });
+    }
+
+    const result = await employeeService.deployEmployee(id, {
+      siteId,
+      ratePerGuard,
+      contractStartDate,
+      contractEndDate
+    });
+
+    return res.json({ message: 'Employee deployed successfully', data: result });
+  } catch (err) {
+    console.error(err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to deploy employee' });
+  }
+}
+
 module.exports = {
   getAllEmployees,
+  getDeployableEmployees,
   getEmployeeDetails,
   getEmployeeStats,
   createEmployee,
   updateEmployee,
+  deployEmployee,
   getNextEmployeeId
 };
