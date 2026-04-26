@@ -122,11 +122,26 @@ async function updateClient(req, res) {
   }
 }
 
+/**
+ * GET /api/web/clients/sites
+ */
+async function getAllSitesList(req, res) {
+  try {
+    const sites = await clientService.getAllSitesList();
+    return res.json(sites);
+  } catch (err) {
+    console.error('[getAllSitesList Error]:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message });
+  }
+}
+
 module.exports = {
   getAllClients,
   getClientDetails,
   getClientStats,
   getClientsList,
+  getAllSitesList,
   createClient,
   updateClient
 };

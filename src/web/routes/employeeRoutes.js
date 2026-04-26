@@ -2,7 +2,16 @@ const express = require('express');
 const { requireAuth, requireRole } = require('@middlewares/authMiddleware');
 const paginationMiddleware = require('@middlewares/paginationMiddleware');
 const filterMiddleware = require('@middlewares/filterMiddleware');
-const { getAllEmployees, getEmployeeDetails, getEmployeeStats, createEmployee, updateEmployee, getNextEmployeeId } = require('@controllers/employeeController');
+const {
+  getAllEmployees,
+  getDeployableEmployees,
+  getEmployeeDetails,
+  getEmployeeStats,
+  createEmployee,
+  updateEmployee,
+  getNextEmployeeId,
+  deployEmployee
+} = require('@controllers/employeeController');
 const multer = require('multer');
 
 // Setup multer mapping (files stored in node memory briefly for Cloudinary upload)
@@ -25,11 +34,17 @@ router.get('/stats', requireRole('admin'), getEmployeeStats);
 // GET /api/web/employees/next-id (Must be before /:id)
 router.get('/next-id', requireRole('admin'), getNextEmployeeId);
 
+// GET /api/web/employees/deployable (Must be before /:id)
+router.get('/deployable', requireRole('admin'), getDeployableEmployees);
+
 
 // GET /api/web/employees/:id
 router.get('/:id', requireRole('admin'), getEmployeeDetails);
 
 // PATCH /api/web/employees/:id
 router.patch('/:id', upload.any(), updateEmployee);
+
+// POST /api/web/employees/:id/deploy
+router.post('/:id/deploy', deployEmployee);
 
 module.exports = router;

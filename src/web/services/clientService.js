@@ -208,20 +208,37 @@ async function getClientDetails(id) {
     }
   }
 
-    // 4. Calculate Guard Count
-    // We count all active deployments linked to this client's sites
+    // 4. Calculate Guard Count and per-site occupancy
     const siteIds = sites.map(s => s.id);
     let guardCount = 0;
-    
+    const activeGuardCountsBySite = new Map();
+
     if (siteIds.length > 0) {
-      const { count, error: countError } = await supabaseAdmin
+      const { data: deployments, error: deploymentsError } = await supabaseAdmin
         .from('deployments')
-        .select('*', { count: 'exact', head: true })
+        .select('id, site_id')
         .in('site_id', siteIds)
         .eq('status', 'active');
-      
-      if (!countError) guardCount = count || 0;
+
+      if (deploymentsError) {
+        const err = new Error(deploymentsError.message);
+        err.status = 500;
+        throw err;
+      }
+
+      guardCount = deployments?.length || 0;
+      for (const deployment of deployments || []) {
+        activeGuardCountsBySite.set(
+          deployment.site_id,
+          (activeGuardCountsBySite.get(deployment.site_id) || 0) + 1
+        );
+      }
     }
+
+    const enrichedSites = sites.map((site) => ({
+      ...site,
+      active_guard_count: activeGuardCountsBySite.get(site.id) || 0,
+    }));
 
     // Generate initials
     let initials = '??';
@@ -250,7 +267,7 @@ async function getClientDetails(id) {
       guard_count: guardCount,
 
       // Relations
-      sites: sites,
+      sites: enrichedSites,
       billings: billings,
       service_tickets: serviceTickets
     };
@@ -452,13 +469,25 @@ async function createClient(data) {
  * Updates an existing client's profile and client details.
  */
 async function updateClient(id, data) {
+  const { data: existingClient, error: existingClientError } = await supabaseAdmin
+    .from('clients')
+    .select('contract_start_date, contract_end_date')
+    .eq('id', id)
+    .single();
+
+  if (existingClientError || !existingClient) {
+    const err = new Error('Client not found');
+    err.status = 404;
+    throw err;
+  }
+
   // 1. Prepare profile update data
   const profileUpdates = {};
-  if (data.firstName) profileUpdates.first_name = toProperCase(data.firstName);
-  if (data.lastName)  profileUpdates.last_name = toProperCase(data.lastName);
+  if (data.firstName !== undefined) profileUpdates.first_name = data.firstName ? toProperCase(data.firstName) : null;
+  if (data.lastName !== undefined)  profileUpdates.last_name = data.lastName ? toProperCase(data.lastName) : null;
   if (data.middleName !== undefined) profileUpdates.middle_name = data.middleName ? toProperCase(data.middleName) : null;
   if (data.suffix !== undefined) profileUpdates.suffix = data.suffix;
-  if (data.status) profileUpdates.status = data.status;
+  if (data.status !== undefined) profileUpdates.status = data.status;
   if (data.mobile !== undefined) {
     profileUpdates.phone_number = normalizeMobileNumber(data.mobile, {
       required: true,
@@ -477,12 +506,32 @@ async function updateClient(id, data) {
 
   // 2. Prepare client details update data
   const clientUpdates = {};
-  if (data.company) clientUpdates.company = toProperCase(data.company);
-  if (data.billingAddress) clientUpdates.billing_address = data.billingAddress;
-  if (data.contractStartDate) clientUpdates.contract_start_date = data.contractStartDate;
-  if (data.contractEndDate) clientUpdates.contract_end_date = data.contractEndDate;
-  if (data.ratePerGuard !== undefined) clientUpdates.rate_per_guard = data.ratePerGuard ? parseFloat(data.ratePerGuard) : null;
-  if (data.billingType) clientUpdates.billing_type = data.billingType.toLowerCase();
+  if (data.company !== undefined) clientUpdates.company = data.company ? toProperCase(data.company) : null;
+  if (data.billingAddress !== undefined) clientUpdates.billing_address = data.billingAddress || null;
+
+  const nextContractStartDate = data.contractStartDate !== undefined
+    ? (data.contractStartDate || null)
+    : existingClient.contract_start_date;
+  const nextContractEndDate = data.contractEndDate !== undefined
+    ? (data.contractEndDate || null)
+    : existingClient.contract_end_date;
+
+  const nextRatePerGuard = data.ratePerGuard === undefined
+    ? undefined
+    : (data.ratePerGuard === '' ? null : Number(data.ratePerGuard));
+
+  if (nextContractStartDate && nextContractEndDate && new Date(nextContractStartDate) >= new Date(nextContractEndDate)) {
+    throw buildBadRequestError('Contract end date must be after start date.');
+  }
+
+  if (nextRatePerGuard !== undefined && nextRatePerGuard !== null && Number.isNaN(nextRatePerGuard)) {
+    throw buildBadRequestError('Rate per guard must be a valid number.');
+  }
+
+  if (data.contractStartDate !== undefined) clientUpdates.contract_start_date = nextContractStartDate;
+  if (data.contractEndDate !== undefined) clientUpdates.contract_end_date = nextContractEndDate;
+  if (nextRatePerGuard !== undefined) clientUpdates.rate_per_guard = nextRatePerGuard;
+  if (data.billingType !== undefined) clientUpdates.billing_type = data.billingType ? data.billingType.toLowerCase() : null;
 
   if (Object.keys(clientUpdates).length > 0) {
     const { error: clientError } = await supabaseAdmin
@@ -515,11 +564,38 @@ async function getClientsList() {
   return clients;
 }
 
+/**
+ * Fetch a list of active client sites, including client info.
+ * @returns {Array} List of { id, site_name, site_address, clients: { company } }
+ */
+async function getAllSitesList() {
+  const { data: sites, error } = await supabaseAdmin
+    .from('client_sites')
+    .select(`
+      id, 
+      site_name, 
+      site_address, 
+      client_id,
+      clients ( company )
+    `)
+    .eq('is_active', true)
+    .order('site_name', { ascending: true });
+
+  if (error) {
+    const err = new Error(error.message);
+    err.status = 500;
+    throw err;
+  }
+
+  return sites;
+}
+
 module.exports = {
   getAllClients,
   getClientDetails,
   getClientStats,
   getClientsList,
+  getAllSitesList,
   createClient,
   updateClient
 };
