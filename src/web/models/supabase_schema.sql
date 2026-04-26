@@ -1,5 +1,5 @@
 user_role = [admin, employee, client]
-user_status = [active, inactive, terminated, archived]
+user_status = [active, inactive, terminated]
 
 create table public.profiles (
   id uuid not null,
@@ -37,9 +37,16 @@ create table public.employees (
   height_cm numeric null,
   educational_level text null,
   residential_address text null,
+  provincial_address text null,
+  place_of_birth text null,
+  blood_type text null,
   emergency_contact_name text null,
   emergency_contact_number text null,
+  emergency_contact_relationship text null,
   employment_type text null default 'Regular'::text,
+  badge_number text null,
+  license_number text null,
+  license_expiry_date date null,
   latitude double precision null,
   longitude double precision null,
   constraint employees_pkey primary key (id),
@@ -278,3 +285,214 @@ create table public.payroll_records (
   constraint payroll_records_pkey primary key (id),
   constraint payroll_records_employee_id_fkey foreign KEY (employee_id) references employees (id) on delete CASCADE
 ) TABLESPACE pg_default;
+
+create table if not exists public.employee_contracts (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  employee_id uuid not null,
+  contract_type text not null default 'employment'::text,
+  start_date date not null,
+  end_date date null,
+  document_url text null,
+  salary_at_signing numeric null,
+  rate_per_guard numeric null,
+  status text null default 'active'::text,
+  created_at timestamp with time zone null default now(),
+  updated_at timestamp with time zone not null default timezone('utc'::text, now()),
+  constraint employee_contracts_end_after_start check (end_date is null or end_date >= start_date),
+  constraint employee_contracts_pkey primary key (id),
+  constraint employee_contracts_employee_id_fkey foreign KEY (employee_id) references employees (id) on delete CASCADE
+) TABLESPACE pg_default;
+---------------------------------------------------------------------------------------
+
+alter table public.employee_contracts enable row level security;
+
+-- Helpful trigger to keep updated_at fresh
+create or replace function public.set_updated_at()
+returns trigger as $$
+begin
+  new.updated_at := timezone('utc'::text, now());
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists employee_contracts_set_updated_at on public.employee_contracts;
+create trigger employee_contracts_set_updated_at
+before update on public.employee_contracts
+for each row execute function public.set_updated_at();
+
+-- API privileges
+revoke all on public.employee_contracts from public;
+grant select, insert, update, delete on public.employee_contracts to authenticated;
+
+-- RLS helper function to get user role safely
+create or replace function public.get_user_role()
+returns public.user_role as $$
+  select role from public.profiles where id = auth.uid();
+$$ language sql security definer;
+
+-- RLS policies for employee_contracts
+-- Employees can view their own contracts
+create policy "Employee contracts select own" on public.employee_contracts
+for select to authenticated
+using (
+  employee_id = auth.uid() OR
+  public.get_user_role() = 'admin'::public.user_role
+);
+
+-- Only admins can insert, update, or delete contracts
+create policy "Employee contracts admin insert" on public.employee_contracts
+for insert to authenticated
+with check (public.get_user_role() = 'admin'::public.user_role);
+
+create policy "Employee contracts admin update" on public.employee_contracts
+for update to authenticated
+using (public.get_user_role() = 'admin'::public.user_role)
+with check (public.get_user_role() = 'admin'::public.user_role);
+
+create policy "Employee contracts admin delete" on public.employee_contracts
+for delete to authenticated
+using (public.get_user_role() = 'admin'::public.user_role);
+
+create index if not exists idx_employee_contracts_employee_id on public.employee_contracts(employee_id);
+create index if not exists idx_employee_contracts_dates on public.employee_contracts(employee_id, start_date, end_date);
+
+-- ==========================================
+-- ROW LEVEL SECURITY FOR ALL OTHER TABLES
+-- ==========================================
+
+-- Enable RLS on all tables
+alter table public.profiles enable row level security;
+alter table public.employees enable row level security;
+alter table public.clearances enable row level security;
+alter table public.clients enable row level security;
+alter table public.client_sites enable row level security;
+alter table public.deployments enable row level security;
+alter table public.schedules enable row level security;
+alter table public.attendance_logs enable row level security;
+alter table public.location_pings enable row level security;
+alter table public.leave_requests enable row level security;
+alter table public.leave_balances enable row level security;
+alter table public.cash_advances enable row level security;
+alter table public.incidents enable row level security;
+alter table public.service_tickets enable row level security;
+alter table public.billings enable row level security;
+alter table public.payroll_records enable row level security;
+
+-- PROFILES
+create policy "Profiles select" on public.profiles for select to authenticated using (
+  id = auth.uid() OR 
+  public.get_user_role() = 'admin'::public.user_role OR
+  (public.get_user_role() = 'client'::public.user_role AND id IN (
+    select e.id from public.deployments d
+    join public.employees e on d.employee_id = e.id
+    join public.client_sites cs on d.site_id = cs.id
+    where cs.client_id = auth.uid()
+  ))
+);
+create policy "Profiles update own" on public.profiles for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
+create policy "Profiles admin all" on public.profiles for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- EMPLOYEES
+create policy "Employees select" on public.employees for select to authenticated using (
+  id = auth.uid() OR
+  public.get_user_role() = 'admin'::public.user_role OR
+  (public.get_user_role() = 'client'::public.user_role AND id IN (
+    select employee_id from public.deployments d
+    join public.client_sites cs on d.site_id = cs.id
+    where cs.client_id = auth.uid()
+  ))
+);
+create policy "Employees update own" on public.employees for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
+create policy "Employees admin all" on public.employees for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- CLEARANCES
+create policy "Clearances select own" on public.clearances for select to authenticated using (employee_id = auth.uid() OR public.get_user_role() = 'admin'::public.user_role);
+create policy "Clearances admin all" on public.clearances for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- CLIENTS
+create policy "Clients select own" on public.clients for select to authenticated using (id = auth.uid() OR public.get_user_role() = 'admin'::public.user_role);
+create policy "Clients admin all" on public.clients for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- CLIENT SITES
+create policy "Client Sites select" on public.client_sites for select to authenticated using (
+  client_id = auth.uid() OR
+  public.get_user_role() = 'admin'::public.user_role OR
+  id IN (select site_id from public.deployments where employee_id = auth.uid())
+);
+create policy "Client Sites update own" on public.client_sites for update to authenticated using (client_id = auth.uid()) with check (client_id = auth.uid());
+create policy "Client Sites admin all" on public.client_sites for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- DEPLOYMENTS
+create policy "Deployments select" on public.deployments for select to authenticated using (
+  employee_id = auth.uid() OR
+  public.get_user_role() = 'admin'::public.user_role OR
+  site_id IN (select id from public.client_sites where client_id = auth.uid())
+);
+create policy "Deployments admin all" on public.deployments for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- SCHEDULES
+create policy "Schedules select" on public.schedules for select to authenticated using (
+  public.get_user_role() = 'admin'::public.user_role OR
+  deployment_id IN (select id from public.deployments where employee_id = auth.uid() OR site_id IN (select id from public.client_sites where client_id = auth.uid()))
+);
+create policy "Schedules admin all" on public.schedules for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- ATTENDANCE LOGS
+create policy "Attendance logs select" on public.attendance_logs for select to authenticated using (
+  employee_id = auth.uid() OR
+  public.get_user_role() = 'admin'::public.user_role OR
+  site_id IN (select id from public.client_sites where client_id = auth.uid())
+);
+create policy "Attendance logs insert own" on public.attendance_logs for insert to authenticated with check (employee_id = auth.uid());
+create policy "Attendance logs admin all" on public.attendance_logs for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- LOCATION PINGS
+create policy "Location pings select" on public.location_pings for select to authenticated using (
+  employee_id = auth.uid() OR
+  public.get_user_role() = 'admin'::public.user_role OR
+  attendance_log_id IN (select id from public.attendance_logs where site_id IN (select id from public.client_sites where client_id = auth.uid()))
+);
+create policy "Location pings insert own" on public.location_pings for insert to authenticated with check (employee_id = auth.uid());
+create policy "Location pings admin all" on public.location_pings for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- LEAVE REQUESTS
+create policy "Leave requests select own" on public.leave_requests for select to authenticated using (employee_id = auth.uid() OR public.get_user_role() = 'admin'::public.user_role);
+create policy "Leave requests insert own" on public.leave_requests for insert to authenticated with check (employee_id = auth.uid());
+create policy "Leave requests update own pending" on public.leave_requests for update to authenticated using (employee_id = auth.uid() AND status = 'pending') with check (employee_id = auth.uid() AND status = 'pending');
+create policy "Leave requests admin all" on public.leave_requests for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- LEAVE BALANCES
+create policy "Leave balances select own" on public.leave_balances for select to authenticated using (employee_id = auth.uid() OR public.get_user_role() = 'admin'::public.user_role);
+create policy "Leave balances admin all" on public.leave_balances for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- CASH ADVANCES
+create policy "Cash advances select own" on public.cash_advances for select to authenticated using (employee_id = auth.uid() OR public.get_user_role() = 'admin'::public.user_role);
+create policy "Cash advances insert own" on public.cash_advances for insert to authenticated with check (employee_id = auth.uid());
+create policy "Cash advances admin all" on public.cash_advances for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- INCIDENTS
+create policy "Incidents select" on public.incidents for select to authenticated using (
+  reporter_id = auth.uid() OR
+  public.get_user_role() = 'admin'::public.user_role OR
+  site_id IN (select id from public.client_sites where client_id = auth.uid())
+);
+create policy "Incidents insert own" on public.incidents for insert to authenticated with check (reporter_id = auth.uid());
+create policy "Incidents admin all" on public.incidents for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- SERVICE TICKETS
+create policy "Service tickets select" on public.service_tickets for select to authenticated using (
+  client_id = auth.uid() OR
+  assigned_to = auth.uid() OR
+  public.get_user_role() = 'admin'::public.user_role
+);
+create policy "Service tickets insert own" on public.service_tickets for insert to authenticated with check (client_id = auth.uid());
+create policy "Service tickets admin all" on public.service_tickets for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- BILLINGS
+create policy "Billings select own" on public.billings for select to authenticated using (client_id = auth.uid() OR public.get_user_role() = 'admin'::public.user_role);
+create policy "Billings admin all" on public.billings for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
+-- PAYROLL RECORDS
+create policy "Payroll records select own" on public.payroll_records for select to authenticated using (employee_id = auth.uid() OR public.get_user_role() = 'admin'::public.user_role);
+create policy "Payroll records admin all" on public.payroll_records for all to authenticated using (public.get_user_role() = 'admin'::public.user_role) with check (public.get_user_role() = 'admin'::public.user_role);
+
