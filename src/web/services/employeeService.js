@@ -1,6 +1,6 @@
 const { supabaseAdmin } = require('@src/supabaseClient');
 const { getPaginationRange } = require('@utils/pagination');
-const { applySupabaseFilters, isClientFilterActive } = require('@utils/supabaseFilters');
+const { applySupabaseFilters } = require('@utils/supabaseFilters');
 const {
   buildBadRequestError,
   normalizeMobileNumber,
@@ -16,10 +16,13 @@ const { rollbackProvisionedUser } = require('@utils/userProvisioning');
  * @returns {Object} { employees: Array, totalCount: number }
  */
 async function getAllEmployees(page = 1, limit = 6, filters = null) {
+  const clientFilter = filters?.client || 'all';
+  const shouldPostFilterByActiveDeployment = clientFilter && clientFilter !== 'all';
   const { from, to } = getPaginationRange(page, limit);
-  const useInner = isClientFilterActive(filters);
+  const dbFilters = shouldPostFilterByActiveDeployment
+    ? { ...filters, client: 'all' }
+    : filters;
 
-  // Use !inner if we are filtering by client to only return matching rows
   let query = supabaseAdmin
     .from('profiles')
     .select(`
@@ -28,11 +31,11 @@ async function getAllEmployees(page = 1, limit = 6, filters = null) {
       last_name,
       status,
       avatar_url,
-      employees${useInner ? '!inner' : ''} (
+      employees (
         employee_id_number,
         position,
         hire_date,
-        deployments!deployments_employee_id_fkey${useInner ? '!inner' : ''} (
+        deployments!deployments_employee_id_fkey (
           status,
           client_sites!inner (
             site_name,
@@ -47,9 +50,13 @@ async function getAllEmployees(page = 1, limit = 6, filters = null) {
     .eq('role', 'employee');
 
   // Apply shared filters
-  query = applySupabaseFilters(query, filters);
+  query = applySupabaseFilters(query, dbFilters);
 
-  const { data: profiles, error, count } = await query.range(from, to);
+  if (!shouldPostFilterByActiveDeployment) {
+    query = query.range(from, to);
+  }
+
+  const { data: profiles, error, count } = await query;
 
   if (error) {
     const err = new Error(error.message);
@@ -91,14 +98,29 @@ async function getAllEmployees(page = 1, limit = 6, filters = null) {
       avatar_url: p.avatar_url || null,
       status: p.status, // e.g. 'active', 'inactive'
       position: emp.position || 'N/A',
+      active_client_id: activeDeployment?.client_sites?.client_id || null,
       client: companyName,
       tenure: tenure
     };
   });
 
+  const filteredByActiveDeployment = shouldPostFilterByActiveDeployment
+    ? formatted.filter((employee) => (
+      clientFilter === 'unassigned'
+        ? employee.active_client_id == null
+        : employee.active_client_id === clientFilter
+    ))
+    : formatted;
+
+  const paginatedEmployees = shouldPostFilterByActiveDeployment
+    ? filteredByActiveDeployment.slice(from, to + 1)
+    : formatted;
+
   return {
-    employees: formatted,
-    totalCount: count || 0
+    employees: paginatedEmployees,
+    totalCount: shouldPostFilterByActiveDeployment
+      ? filteredByActiveDeployment.length
+      : (count || 0)
   };
 }
 
@@ -154,6 +176,7 @@ async function getEmployeeDetails(id) {
           status,
           start_date,
           end_date,
+          deployment_order_url,
           client_sites (
             site_name,
             clients (
@@ -230,6 +253,11 @@ async function getEmployeeDetails(id) {
   payroll.sort((a, b) => new Date(b.period_end) - new Date(a.period_end));
 
   const activeDeployment = deployments.find(d => d.status === 'active');
+  const latestDeployment = activeDeployment || [...deployments].sort((a, b) => {
+    const aDate = a?.start_date ? new Date(a.start_date).getTime() : 0;
+    const bDate = b?.start_date ? new Date(b.start_date).getTime() : 0;
+    return bDate - aDate;
+  })[0];
   const companyName = activeDeployment?.client_sites?.clients?.company || 'Floating';
   const siteName = activeDeployment?.client_sites?.site_name || 'None';
 
@@ -284,6 +312,7 @@ async function getEmployeeDetails(id) {
     clearances: clearances,
     payroll_records: payroll,
     deployments: deployments,
+    deployment_order_url: latestDeployment?.deployment_order_url || null,
     document_url: latestContract?.document_url || null
   };
 }
@@ -402,6 +431,7 @@ const CLEARANCE_EXPIRY_YEARS = {
   drugtest: 1,
   sg_license: 2,
   valid_id: null,
+  personal_information_sheet: null,
   resume: null,
 };
 
@@ -430,6 +460,45 @@ function normalizeContractDates(startDate, endDate, fallbackStartDate = null) {
   return {
     contractStartDate,
     contractEndDate,
+  };
+}
+
+function normalizeSchedule(schedule = {}) {
+  const rawDays = Array.isArray(schedule.daysOfWeek) ? schedule.daysOfWeek : [];
+  const daysOfWeek = [...new Set(
+    rawDays
+      .map((day) => Number(day))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+  )].sort((a, b) => a - b);
+
+  if (daysOfWeek.length === 0) {
+    throw buildBadRequestError('At least one schedule day is required.');
+  }
+
+  const normalizeTime = (value, fieldLabel) => {
+    if (!value) {
+      throw buildBadRequestError(`${fieldLabel} is required.`);
+    }
+
+    const trimmed = String(value).trim();
+    if (!/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(trimmed)) {
+      throw buildBadRequestError(`${fieldLabel} is invalid.`);
+    }
+
+    return trimmed.length === 5 ? `${trimmed}:00` : trimmed;
+  };
+
+  const shiftStart = normalizeTime(schedule.shiftStart, 'Shift start time');
+  const shiftEnd = normalizeTime(schedule.shiftEnd, 'Shift end time');
+
+  if (shiftStart === shiftEnd) {
+    throw buildBadRequestError('Shift start and end time cannot be the same.');
+  }
+
+  return {
+    days_of_week: daysOfWeek,
+    shift_start: shiftStart,
+    shift_end: shiftEnd,
   };
 }
 
@@ -551,6 +620,7 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
     deploymentOrderUrl,
     initialSiteId,
   } = extras;
+  const startingBaseSalary = initialSiteId && data.basicRate ? parseFloat(data.basicRate) : null;
   const shouldCreateDeployment = !!initialSiteId;
   const shouldCreateContract = !!(contractDocUrl || contractEndDate || shouldCreateDeployment);
   const { contractStartDate, contractEndDate: normalizedContractEndDate } = shouldCreateContract
@@ -600,7 +670,7 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
         employee_id_number: data.employeeId,
         position: data.position,
         hire_date: data.hireDate,
-        base_salary: data.basicRate ? parseFloat(data.basicRate) : null,
+        base_salary: startingBaseSalary,
         pay_frequency: payFrequency,
         tin_number: data.tinNumber || null,
         sss_number: data.sssNumber || null,
@@ -669,7 +739,7 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
           contract_type: 'employment',
           start_date: contractStartDate,
           end_date: normalizedContractEndDate,
-          salary_at_signing: data.basicRate ? parseFloat(data.basicRate) : null,
+          salary_at_signing: startingBaseSalary,
           rate_per_guard: siteAssignment?.clients?.rate_per_guard ?? null,
           document_url: contractDocUrl || null,
           status: 'active',
@@ -742,7 +812,7 @@ async function getNextEmployeeId() {
  * @param {Object} data          - Flat object of field updates
  * @param {Array}  clearances    - Array of { type, url } for updated documents
  */
-async function updateEmployee(id, data, clearances = [], avatarUrl = null) {
+async function updateEmployee(id, data, clearances = [], avatarUrl = null, deploymentOrderUrl = null) {
   // ── 1. Update profiles table ──────────────────────────────────────────────
   const profilePatch = {};
   if (data.phone_number !== undefined) {
@@ -770,7 +840,6 @@ async function updateEmployee(id, data, clearances = [], avatarUrl = null) {
   if (data.civil_status            !== undefined) empPatch.civil_status            = data.civil_status            || null;
   if (data.height_cm               !== undefined) empPatch.height_cm               = data.height_cm ? parseFloat(data.height_cm) : null;
   if (data.educational_level       !== undefined) empPatch.educational_level       = data.educational_level       || null;
-  if (data.citizenship             !== undefined) empPatch.citizenship             = data.citizenship             || null;
   if (data.provincial_address      !== undefined) empPatch.provincial_address      = data.provincial_address      || null;
   if (data.place_of_birth          !== undefined) empPatch.place_of_birth          = data.place_of_birth          || null;
   if (data.blood_type              !== undefined) empPatch.blood_type              = data.blood_type              || null;
@@ -838,6 +907,29 @@ async function updateEmployee(id, data, clearances = [], avatarUrl = null) {
     if (clearError) throw clearError;
   }
 
+  if (deploymentOrderUrl) {
+    const { data: activeDeployment, error: deploymentError } = await supabaseAdmin
+      .from('deployments')
+      .select('id')
+      .eq('employee_id', id)
+      .eq('status', 'active')
+      .order('start_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (deploymentError) throw deploymentError;
+    if (!activeDeployment) {
+      throw buildBadRequestError('An active deployment is required before uploading a deployment order.');
+    }
+
+    const { error: updateDeploymentError } = await supabaseAdmin
+      .from('deployments')
+      .update({ deployment_order_url: deploymentOrderUrl })
+      .eq('id', activeDeployment.id);
+
+    if (updateDeploymentError) throw updateDeploymentError;
+  }
+
   return { success: true };
 }
 
@@ -845,7 +937,16 @@ async function updateEmployee(id, data, clearances = [], avatarUrl = null) {
  * Deploys an employee to a client site.
  * Creates a deployment record and an employee_contract.
  */
-async function deployEmployee(employeeId, { siteId, ratePerGuard, contractStartDate, contractEndDate }) {
+async function deployEmployee(employeeId, {
+  siteId,
+  ratePerGuard,
+  contractStartDate,
+  contractEndDate,
+  daysOfWeek,
+  shiftStart,
+  shiftEnd,
+  deploymentOrderUrl
+}) {
   const employeeProfile = await getEmployeeProfileForDeployment(employeeId);
   const siteAssignment = await getActiveSiteAssignment(siteId);
   const normalizedRatePerGuard = ratePerGuard ?? siteAssignment.clients?.rate_per_guard ?? null;
@@ -853,6 +954,7 @@ async function deployEmployee(employeeId, { siteId, ratePerGuard, contractStartD
     contractStartDate: normalizedContractStartDate,
     contractEndDate: normalizedContractEndDate,
   } = normalizeContractDates(contractStartDate, contractEndDate);
+  const normalizedSchedule = normalizeSchedule({ daysOfWeek, shiftStart, shiftEnd });
 
   // Check if already active
   const { data: existing } = await supabaseAdmin
@@ -887,6 +989,7 @@ async function deployEmployee(employeeId, { siteId, ratePerGuard, contractStartD
     .insert([{
       employee_id: employeeId,
       site_id: siteAssignment.id,
+      deployment_order_url: deploymentOrderUrl || null,
       start_date: normalizedContractStartDate,
       end_date: normalizedContractEndDate,
       status: 'active'
@@ -900,6 +1003,26 @@ async function deployEmployee(employeeId, { siteId, ratePerGuard, contractStartD
       .delete()
       .eq('id', contract.id);
     throw depError;
+  }
+
+  const { error: scheduleError } = await supabaseAdmin
+    .from('schedules')
+    .insert([{
+      deployment_id: deployment.id,
+      ...normalizedSchedule,
+      is_active: true,
+    }]);
+
+  if (scheduleError) {
+    await supabaseAdmin
+      .from('deployments')
+      .delete()
+      .eq('id', deployment.id);
+    await supabaseAdmin
+      .from('employee_contracts')
+      .delete()
+      .eq('id', contract.id);
+    throw scheduleError;
   }
 
   return { success: true, deployment_id: deployment.id };
