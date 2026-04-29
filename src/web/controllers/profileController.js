@@ -1,38 +1,49 @@
-const { supabaseAdmin } = require('@src/supabaseClient');
+const profileService = require('@services/profileService');
 
 /**
  * GET /api/web/profile/me
- * Headers: Authorization: Bearer <access_token>
+ * Returns the full profile for the authenticated client.
  */
 async function getProfile(req, res) {
   try {
-    const userId = req.user.id;
-
-    // Fetch comprehensive profile data
-    const { data: profile, error } = await supabaseAdmin
-      .from('profiles')
-      .select('first_name, middle_name, last_name, contact_email, phone_number, role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
-      .eq('id', userId)
-      .single();
-
-    if (error || !profile) {
-      return res.status(404).json({ error: 'Profile not found' });
-    }
-
-    const emp = profile.employees?.[0] || profile.employees || {};
-    const client = profile.clients?.[0] || profile.clients || {};
-    delete profile.employees;
-    delete profile.clients;
-    profile.position = emp.position || null;
-    profile.employee_id_number = emp.employee_id_number || null;
-    profile.hire_date = emp.hire_date || null;
-    profile.company = client.company || null;
-    profile.billing_address = client.billing_address || null;
-
+    const profile = await profileService.getProfile(req.user.id);
     return res.json(profile);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error('[getProfile Error]:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message });
   }
 }
 
-module.exports = { getProfile };
+/**
+ * PATCH /api/web/profile/me
+ * Body: { firstName?, lastName?, middleName?, phone? }
+ */
+async function updateContactPerson(req, res) {
+  try {
+    const result = await profileService.updateContactPerson(req.user.id, req.body);
+    return res.json(result);
+  } catch (err) {
+    console.error('[updateContactPerson Error]:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message });
+  }
+}
+
+/**
+ * POST /api/web/profile/change-password
+ * Body: { currentPassword, newPassword, confirmPassword }
+ */
+async function changePassword(req, res) {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    const result = await profileService.changePassword(token, req.user.id, req.body);
+    return res.json(result);
+  } catch (err) {
+    console.error('[changePassword Error]:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message });
+  }
+}
+
+module.exports = { getProfile, updateContactPerson, changePassword };
