@@ -14,6 +14,7 @@ create table public.profiles (
   middle_name text null,
   deleted_at timestamp with time zone null,
   suffix text null,
+  admin_role text null,
   constraint profiles_pkey primary key (id),
   constraint profiles_contact_email_key unique (contact_email),
   constraint profiles_id_fkey foreign KEY (id) references auth.users (id)
