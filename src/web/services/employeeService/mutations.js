@@ -685,9 +685,129 @@ async function transferEmployeeAssignment(employeeId, {
   };
 }
 
+function getEffectiveClosureDate(currentStartDate, requestedEndDate = null) {
+  const today = new Date().toISOString().split('T')[0];
+  const desiredEndDate = requestedEndDate || today;
+
+  if (!currentStartDate) {
+    return desiredEndDate;
+  }
+
+  return new Date(desiredEndDate) < new Date(currentStartDate)
+    ? currentStartDate
+    : desiredEndDate;
+}
+
+async function relieveEmployeeAssignment(employeeId, { reliefDate } = {}) {
+  const employeeProfile = await getEmployeeProfileForDeployment(employeeId);
+  const effectiveReliefDate = reliefDate || new Date().toISOString().split('T')[0];
+
+  const { data: activeDeployments, error: activeDeploymentError } = await supabaseAdmin
+    .from('deployments')
+    .select('id, site_id, start_date, end_date')
+    .eq('employee_id', employeeId)
+    .eq('status', 'active')
+    .order('start_date', { ascending: false });
+
+  if (activeDeploymentError) throw activeDeploymentError;
+  if (!activeDeployments || activeDeployments.length === 0) {
+    throw buildBadRequestError('Employee does not have an active deployment to relieve.');
+  }
+
+  const currentDeployment = activeDeployments[0];
+  const deploymentClosureEndDate = getEffectiveClosureDate(currentDeployment.start_date, effectiveReliefDate);
+
+  const { data: activeContracts, error: activeContractError } = await supabaseAdmin
+    .from('employee_contracts')
+    .select('id, start_date, end_date, status')
+    .eq('employee_id', employeeId)
+    .eq('status', 'active')
+    .order('start_date', { ascending: false });
+
+  if (activeContractError) throw activeContractError;
+
+  const currentContract = activeContracts?.[0] || null;
+  const contractClosureEndDate = currentContract
+    ? getEffectiveClosureDate(currentContract.start_date, effectiveReliefDate)
+    : null;
+
+  const { data: activeSchedules, error: activeScheduleError } = await supabaseAdmin
+    .from('schedules')
+    .select('id, is_active')
+    .eq('deployment_id', currentDeployment.id)
+    .eq('is_active', true);
+
+  if (activeScheduleError) throw activeScheduleError;
+
+  const activeScheduleIds = (activeSchedules || []).map((schedule) => schedule.id);
+
+  if (activeScheduleIds.length > 0) {
+    const { error: deactivateScheduleError } = await supabaseAdmin
+      .from('schedules')
+      .update({ is_active: false })
+      .in('id', activeScheduleIds);
+
+    if (deactivateScheduleError) throw deactivateScheduleError;
+  }
+
+  const { error: deactivateDeploymentError } = await supabaseAdmin
+    .from('deployments')
+    .update({
+      status: 'inactive',
+      end_date: deploymentClosureEndDate,
+    })
+    .eq('id', currentDeployment.id);
+
+  if (deactivateDeploymentError) {
+    if (activeScheduleIds.length > 0) {
+      await supabaseAdmin
+        .from('schedules')
+        .update({ is_active: true })
+        .in('id', activeScheduleIds);
+    }
+    throw deactivateDeploymentError;
+  }
+
+  if (currentContract) {
+    const { error: deactivateContractError } = await supabaseAdmin
+      .from('employee_contracts')
+      .update({
+        status: 'inactive',
+        end_date: contractClosureEndDate,
+      })
+      .eq('id', currentContract.id);
+
+    if (deactivateContractError) {
+      await supabaseAdmin
+        .from('deployments')
+        .update({
+          status: 'active',
+          end_date: currentDeployment.end_date || null,
+        })
+        .eq('id', currentDeployment.id);
+
+      if (activeScheduleIds.length > 0) {
+        await supabaseAdmin
+          .from('schedules')
+          .update({ is_active: true })
+          .in('id', activeScheduleIds);
+      }
+
+      throw deactivateContractError;
+    }
+  }
+
+  return {
+    success: true,
+    employee_id: employeeProfile.id,
+    relieved_from_deployment_id: currentDeployment.id,
+  };
+}
+
 module.exports = {
   createEmployee,
   updateEmployee,
   deployEmployee,
   transferEmployeeAssignment,
+  relieveEmployeeAssignment,
 };

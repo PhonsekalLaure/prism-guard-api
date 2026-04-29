@@ -22,6 +22,19 @@ async function createClient(data) {
   const initialDeployment = data.initialDeployment && typeof data.initialDeployment === 'object'
     ? data.initialDeployment
     : null;
+  const deploymentAssignments = Array.isArray(initialDeployment?.assignments)
+    ? initialDeployment.assignments
+    : (Array.isArray(initialDeployment?.employeeIds)
+      ? initialDeployment.employeeIds.map((employeeId) => ({
+        employeeId,
+        baseSalary: initialDeployment.baseSalary,
+        contractStartDate: initialDeployment.contractStartDate,
+        contractEndDate: initialDeployment.contractEndDate,
+        daysOfWeek: initialDeployment.daysOfWeek,
+        shiftStart: initialDeployment.shiftStart,
+        shiftEnd: initialDeployment.shiftEnd,
+      }))
+      : []);
 
   const allowedBillingTypes = new Set(['semi_monthly', 'monthly', 'weekly']);
   if (!allowedBillingTypes.has(billingType)) {
@@ -98,24 +111,24 @@ async function createClient(data) {
       createdSites = insertedSites || [];
     }
 
-    if (Array.isArray(initialDeployment?.employeeIds) && initialDeployment.employeeIds.length > 0) {
+    if (deploymentAssignments.length > 0) {
       const siteIndex = Number(initialDeployment.siteIndex);
       if (!Number.isInteger(siteIndex) || siteIndex < 0 || siteIndex >= createdSites.length) {
         throw buildBadRequestError('Initial deployment requires a valid selected site.');
       }
 
-      for (const employeeId of initialDeployment.employeeIds) {
-        const deploymentResult = await employeeService.deployEmployee(employeeId, {
+      for (const assignment of deploymentAssignments) {
+        const deploymentResult = await employeeService.deployEmployee(assignment.employeeId, {
           siteId: createdSites[siteIndex].id,
-          baseSalary: initialDeployment.baseSalary,
-          contractStartDate: initialDeployment.contractStartDate || data.contractStartDate || null,
-          contractEndDate: initialDeployment.contractEndDate || data.contractEndDate || null,
-          daysOfWeek: initialDeployment.daysOfWeek,
-          shiftStart: initialDeployment.shiftStart,
-          shiftEnd: initialDeployment.shiftEnd,
+          baseSalary: assignment.baseSalary,
+          contractStartDate: assignment.contractStartDate || data.contractStartDate || null,
+          contractEndDate: assignment.contractEndDate || data.contractEndDate || null,
+          daysOfWeek: assignment.daysOfWeek,
+          shiftStart: assignment.shiftStart,
+          shiftEnd: assignment.shiftEnd,
         });
         createdInitialDeployments.push({
-          employeeId,
+          employeeId: assignment.employeeId,
           ...deploymentResult,
         });
       }

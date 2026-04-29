@@ -292,6 +292,23 @@ async function transferEmployeeAssignment(req, res) {
   }
 }
 
+async function relieveEmployeeAssignment(req, res) {
+  try {
+    const { id } = req.params;
+    const { reliefDate } = req.body;
+
+    const result = await employeeService.relieveEmployeeAssignment(id, {
+      reliefDate: reliefDate || null,
+    });
+
+    return res.json({ message: 'Employee relieved from assignment successfully', data: result });
+  } catch (err) {
+    console.error(err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to relieve employee assignment' });
+  }
+}
+
 module.exports = {
   getAllEmployees,
   getDeployableEmployees,
@@ -301,5 +318,6 @@ module.exports = {
   updateEmployee,
   deployEmployee,
   transferEmployeeAssignment,
+  relieveEmployeeAssignment,
   getNextEmployeeId
 };

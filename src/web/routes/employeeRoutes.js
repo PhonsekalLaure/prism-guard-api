@@ -11,7 +11,8 @@ const {
   updateEmployee,
   getNextEmployeeId,
   deployEmployee,
-  transferEmployeeAssignment
+  transferEmployeeAssignment,
+  relieveEmployeeAssignment
 } = require('@controllers/employeeController');
 const multer = require('multer');
 
@@ -50,5 +51,8 @@ router.post('/:id/deploy', upload.any(), deployEmployee);
 
 // POST /api/web/employees/:id/transfer
 router.post('/:id/transfer', upload.any(), transferEmployeeAssignment);
+
+// POST /api/web/employees/:id/relieve
+router.post('/:id/relieve', relieveEmployeeAssignment);
 
 module.exports = router;
