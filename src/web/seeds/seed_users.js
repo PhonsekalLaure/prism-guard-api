@@ -2,7 +2,7 @@
  * Seed script for users (auth.users + profiles + employees/clients).
  *
  * Creates:
- *   - 3 admins
+ *   - 4 admins
  *   - 10 employees
  *   - 5 clients
  *
@@ -13,7 +13,11 @@
  */
 
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
+const { uploadBufferToCloudinary } = require('../../config/cloudinary');
+const { isValidAdminRole } = require('../utils/adminPermissions');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -21,6 +25,196 @@ const supabase = createClient(
 );
 
 const DEFAULT_PASSWORD = 'PrismGuard2026!';
+const SEED_DIRECTORY = __dirname;
+const DEFAULT_CLEARANCE_TYPES = [
+  'valid_id',
+  'resume',
+  'barangay',
+  'police',
+  'nbi',
+  'neuro',
+  'drugtest',
+  'sg_license',
+];
+const uploadedSeedAssetUrls = new Map();
+
+const employeeSeedDetails = {
+  'marco.santos@prismguard.com': {
+    suffix: 'Jr.',
+    residential_address: '1782 Adriatico Street, Malate, Manila City',
+    provincial_address: 'Pandi, Bulacan',
+    place_of_birth: 'Manila City',
+    blood_type: 'O+',
+    emergency_contact_relationship: 'Mother',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24001',
+    license_number: 'SG-2026-0001',
+    license_expiry_date: '2027-08-15',
+    latitude: 14.5678,
+    longitude: 120.9874,
+    contract_end_date: '2027-03-14',
+    contract_rate_per_guard: 26250,
+  },
+  'jose.delacruz@prismguard.com': {
+    residential_address: '9037 Leveriza Street, Malate, Manila City',
+    provincial_address: 'San Jose Del Monte, Bulacan',
+    place_of_birth: 'Paranaque City',
+    blood_type: 'A+',
+    emergency_contact_relationship: 'Spouse',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24002',
+    license_number: 'SG-2026-0002',
+    license_expiry_date: '2027-09-10',
+    latitude: 14.5609,
+    longitude: 120.9966,
+    contract_end_date: '2027-07-03',
+    contract_rate_per_guard: 23800,
+  },
+  'daniel.garcia@prismguard.com': {
+    residential_address: '1543 A. Mabini Street, Ermita, Manila City',
+    provincial_address: 'Rosario, Cavite',
+    place_of_birth: 'Manila City',
+    blood_type: 'B+',
+    emergency_contact_relationship: 'Sister',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24003',
+    license_number: 'SG-2026-0003',
+    license_expiry_date: '2027-11-30',
+    latitude: 14.5822,
+    longitude: 120.9798,
+    contract_end_date: '2026-11-22',
+    contract_rate_per_guard: 27500,
+  },
+  'miguel.ramos@prismguard.com': {
+    residential_address: '72 Kabihasnan Road, San Dionisio, Paranaque City',
+    provincial_address: 'Balayan, Batangas',
+    place_of_birth: 'Paranaque City',
+    blood_type: 'AB+',
+    emergency_contact_relationship: 'Mother',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24004',
+    license_number: 'SG-2026-0004',
+    license_expiry_date: '2028-02-01',
+    latitude: 14.4872,
+    longitude: 120.9968,
+    contract_end_date: '2027-01-08',
+    contract_rate_per_guard: 26250,
+  },
+  'rafael.bautista@prismguard.com': {
+    residential_address: '1146 Quirino Avenue, Paco, Manila City',
+    provincial_address: 'Guiguinto, Bulacan',
+    place_of_birth: 'Manila City',
+    blood_type: 'O-',
+    emergency_contact_relationship: 'Spouse',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24005',
+    license_number: 'SG-2026-0005',
+    license_expiry_date: '2028-04-20',
+    latitude: 14.5794,
+    longitude: 120.9991,
+    contract_end_date: '2027-02-11',
+    contract_rate_per_guard: 24500,
+  },
+  'adrian.fernandez@prismguard.com': {
+    residential_address: '24 NAIA Road, Don Galo, Paranaque City',
+    provincial_address: 'Imus, Cavite',
+    place_of_birth: 'Paranaque City',
+    blood_type: 'A-',
+    emergency_contact_relationship: 'Spouse',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24006',
+    license_number: 'SG-2026-0006',
+    license_expiry_date: '2027-12-12',
+    latitude: 14.5073,
+    longitude: 120.9937,
+    contract_end_date: '2026-08-18',
+    contract_rate_per_guard: 27500,
+  },
+  'paolo.lim@prismguard.com': {
+    residential_address: '41 Dona Soledad Avenue, Better Living, Paranaque City',
+    provincial_address: 'Silang, Cavite',
+    place_of_birth: 'Manila City',
+    blood_type: 'B-',
+    emergency_contact_relationship: 'Sister',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24007',
+    license_number: 'SG-2026-0007',
+    license_expiry_date: '2027-10-05',
+    latitude: 14.4879,
+    longitude: 121.0412,
+    contract_end_date: '2027-10-10',
+    contract_rate_per_guard: 23800,
+  },
+  'kevin.tan@prismguard.com': {
+    residential_address: '658 P. Ocampo Street, Malate, Manila City',
+    provincial_address: 'Tanza, Cavite',
+    place_of_birth: 'Paranaque City',
+    blood_type: 'O+',
+    emergency_contact_relationship: 'Spouse',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24008',
+    license_number: 'SG-2026-0008',
+    license_expiry_date: '2028-06-30',
+    latitude: 14.5634,
+    longitude: 120.9941,
+    contract_end_date: '2027-06-25',
+    contract_rate_per_guard: 22800,
+  },
+  'james.navarro@prismguard.com': {
+    residential_address: '1020 Blumentritt Road, Sampaloc, Manila City',
+    provincial_address: 'Baliwag, Bulacan',
+    place_of_birth: 'Manila City',
+    blood_type: 'AB-',
+    emergency_contact_relationship: 'Mother',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24009',
+    license_number: 'SG-2026-0009',
+    license_expiry_date: '2027-07-22',
+    latitude: 14.6161,
+    longitude: 120.9923,
+    contract_end_date: '2027-04-17',
+    contract_rate_per_guard: 24500,
+  },
+  'carlos.aquino@prismguard.com': {
+    suffix: 'Sr.',
+    residential_address: '15 Merville Access Road, Merville, Paranaque City',
+    provincial_address: 'Naic, Cavite',
+    place_of_birth: 'Paranaque City',
+    blood_type: 'A+',
+    emergency_contact_relationship: 'Spouse',
+    citizenship: 'Filipino',
+    badge_number: 'BG-24010',
+    license_number: 'SG-2026-0010',
+    license_expiry_date: '2027-05-28',
+    latitude: 14.4945,
+    longitude: 121.0187,
+    contract_end_date: '2027-05-27',
+    contract_rate_per_guard: 26250,
+  },
+};
+
+const clientSeedDetails = {
+  'fernando.sy@goldenpacific.ph': {
+    avatar_key: 'client-avatar-1',
+    billing_address: 'Aseana Square, Bradco Avenue, Tambo, Paranaque City',
+  },
+  'patricia.chua@metroedge.ph': {
+    avatar_key: 'client-avatar-2',
+    billing_address: 'Sucat Interchange Corporate Center, Dr. A. Santos Avenue, Paranaque City',
+  },
+  'roberto.ang@sunrisemall.ph': {
+    avatar_key: 'client-avatar-3',
+    billing_address: 'UN Avenue Commercial Center, Ermita, Manila City',
+  },
+  'diana.ong@vistahomes.ph': {
+    avatar_key: 'client-avatar-4',
+    billing_address: 'Ninoy Aquino Avenue Business Park, Don Galo, Paranaque City',
+  },
+  'henry.lao@primetech.ph': {
+    avatar_key: 'client-avatar-5',
+    billing_address: 'Aseana One, Diosdado Macapagal Boulevard, Paranaque City',
+  },
+};
 
 const admins = [
   {
@@ -30,6 +224,7 @@ const admins = [
     contact_email: 'ricardo.mendoza@prismguard.com',
     phone_number: '+639171000001',
     role: 'admin',
+    admin_role: 'president',
     position: 'President',
     hire_date: '2019-04-08',
   },
@@ -40,16 +235,29 @@ const admins = [
     contact_email: 'carmen.villanueva@prismguard.com',
     phone_number: '+639171000002',
     role: 'admin',
+    admin_role: 'operations_manager',
     position: 'Operations Manager',
     hire_date: '2020-09-14',
+  },
+  {
+    first_name: 'Miguel',
+    middle_name: 'Torres',
+    last_name: 'Navarro',
+    contact_email: 'miguel.navarro@prismguard.com',
+    phone_number: '+639171000003',
+    role: 'admin',
+    admin_role: 'finance_manager',
+    position: 'Finance Manager',
+    hire_date: '2021-06-07',
   },
   {
     first_name: 'Angela',
     middle_name: 'Cruz',
     last_name: 'Reyes',
     contact_email: 'angela.reyes@prismguard.com',
-    phone_number: '+639171000003',
+    phone_number: '+639171000004',
     role: 'admin',
+    admin_role: 'secretary',
     position: 'Secretary',
     hire_date: '2022-02-21',
   },
@@ -399,6 +607,112 @@ function generateEmployeeId(role) {
   return `PG-${String(employeeCounter).padStart(5, '0')}`;
 }
 
+function addYears(dateString, years = 1) {
+  const base = new Date(dateString);
+  base.setFullYear(base.getFullYear() + years);
+  return base.toISOString().split('T')[0];
+}
+
+async function uploadSeedAsset(cacheKey, fileName, folder) {
+  const existingUrl = uploadedSeedAssetUrls.get(cacheKey);
+  if (existingUrl) {
+    return existingUrl;
+  }
+
+  const filePath = path.join(SEED_DIRECTORY, fileName);
+  const buffer = fs.readFileSync(filePath);
+  const url = await uploadBufferToCloudinary(buffer, folder);
+  uploadedSeedAssetUrls.set(cacheKey, url);
+  return url;
+}
+
+async function getSharedSeedAssets() {
+  return {
+    employeeAvatarUrl: await uploadSeedAsset(
+      'employee-avatar',
+      'dummy.jpg',
+      'prism_guard/employees/avatars/seed'
+    ),
+    clientAvatarUrl: await uploadSeedAsset(
+      'client-avatar',
+      'dummy.jpg',
+      'prism_guard/clients/avatars/seed'
+    ),
+    employeeDocumentUrl: await uploadSeedAsset(
+      'employee-document',
+      'dummy.pdf',
+      'prism_guard/employees/documents/seed'
+    ),
+    clientContractUrl: await uploadSeedAsset(
+      'client-contract',
+      'dummy.pdf',
+      'prism_guard/clients/contracts/seed'
+    ),
+  };
+}
+
+function buildEmployeeSeed(employee, seedAssets) {
+  const details = employeeSeedDetails[employee.contact_email] || {};
+
+  return {
+    ...employee,
+    ...details,
+    avatar_url: details.avatar_url || seedAssets.employeeAvatarUrl,
+    clearance_types: details.clearance_types || DEFAULT_CLEARANCE_TYPES,
+    contract_end_date: details.contract_end_date || addYears(employee.hire_date, 1),
+    contract_rate_per_guard: details.contract_rate_per_guard ?? null,
+  };
+}
+
+function buildClientSeed(client, seedAssets) {
+  const details = clientSeedDetails[client.contact_email] || {};
+
+  return {
+    ...client,
+    ...details,
+    avatar_url: details.avatar_url || seedAssets.clientAvatarUrl,
+    contract_url: details.contract_url || seedAssets.clientContractUrl,
+  };
+}
+
+async function insertEmployeeArtifacts(id, employeeData, seedAssets) {
+  const issueDate = employeeData.hire_date;
+  const clearancesToInsert = (employeeData.clearance_types || DEFAULT_CLEARANCE_TYPES).map((clearanceType) => {
+    const expiryYears = clearanceType === 'sg_license' ? 2 : (
+      ['barangay', 'police', 'nbi', 'neuro', 'drugtest'].includes(clearanceType) ? 1 : null
+    );
+
+    return {
+      employee_id: id,
+      clearance_type: clearanceType,
+      issue_date: issueDate,
+      expiry_date: expiryYears ? addYears(issueDate, expiryYears) : null,
+      document_url: seedAssets.employeeDocumentUrl,
+      status: 'valid',
+    };
+  });
+
+  const { error: clearanceError } = await supabase.from('clearances').insert(clearancesToInsert);
+  if (clearanceError) {
+    throw new Error(`Clearance insert failed for ${employeeData.contact_email}: ${clearanceError.message}`);
+  }
+
+  const { error: contractError } = await supabase.from('employee_contracts').insert({
+    employee_id: id,
+    contract_type: 'employment',
+    start_date: employeeData.hire_date,
+    end_date: employeeData.contract_end_date,
+    document_url: seedAssets.employeeDocumentUrl,
+    salary_at_signing: employeeData.base_salary,
+    rate_per_guard: employeeData.contract_rate_per_guard,
+    status: 'active',
+  });
+
+  if (contractError) {
+    throw new Error(`Employee contract insert failed for ${employeeData.contact_email}: ${contractError.message}`);
+  }
+}
+
 async function createAuthUser(email, password) {
   const { data, error } = await supabase.auth.admin.createUser({
     email,
@@ -421,7 +735,9 @@ async function insertProfile(id, userData) {
     last_name: userData.last_name,
     contact_email: userData.contact_email,
     phone_number: userData.phone_number,
+    suffix: userData.suffix || null,
     role: userData.role || 'employee',
+    admin_role: userData.role === 'admin' ? userData.admin_role : null,
     status: userData.status || 'active',
     avatar_url: userData.avatar_url || null,
   });
@@ -431,11 +747,32 @@ async function insertProfile(id, userData) {
   }
 }
 
+function assertValidProfileSeed(userData) {
+  const role = userData.role || 'employee';
+  const hasValidAdminRole = isValidAdminRole(userData.admin_role);
+
+  if (role === 'admin' && !hasValidAdminRole) {
+    throw new Error(
+      `Invalid admin seed for ${userData.contact_email}: role=admin requires a valid admin_role`
+    );
+  }
+
+  if (role !== 'admin' && userData.admin_role != null) {
+    throw new Error(
+      `Invalid non-admin seed for ${userData.contact_email}: admin_role must be null`
+    );
+  }
+}
+
 async function seed() {
   console.log('Starting user seed...\n');
+  console.log('Uploading shared seed assets...');
+  const seedAssets = await getSharedSeedAssets();
+  console.log('  OK shared seed assets uploaded.');
 
   console.log('Seeding admins...');
   for (const admin of admins) {
+    assertValidProfileSeed(admin);
     const id = await createAuthUser(admin.contact_email, DEFAULT_PASSWORD);
     await insertProfile(id, admin);
 
@@ -458,51 +795,68 @@ async function seed() {
 
   console.log('\nSeeding employees...');
   for (const emp of employees) {
+    const seededEmployee = buildEmployeeSeed(emp, seedAssets);
+    assertValidProfileSeed({ ...seededEmployee, role: 'employee' });
     const id = await createAuthUser(emp.contact_email, DEFAULT_PASSWORD);
-    await insertProfile(id, { ...emp, role: 'employee' });
+    await insertProfile(id, { ...seededEmployee, role: 'employee' });
 
     const { error } = await supabase.from('employees').insert({
       id,
       employee_id_number: generateEmployeeId('employee'),
-      position: emp.position,
-      hire_date: emp.hire_date,
-      base_salary: emp.base_salary,
-      pay_frequency: emp.pay_frequency,
-      employment_type: emp.employment_type || 'regular',
-      tin_number: emp.tin_number || null,
-      sss_number: emp.sss_number || null,
-      philhealth_number: emp.philhealth_number || null,
-      pagibig_number: emp.pagibig_number || null,
-      date_of_birth: emp.date_of_birth || null,
-      gender: emp.gender || null,
-      civil_status: emp.civil_status || null,
-      educational_level: emp.educational_level || null,
-      height_cm: emp.height_cm || null,
-      residential_address: emp.residential_address || null,
-      emergency_contact_name: emp.emergency_contact_name || null,
-      emergency_contact_number: emp.emergency_contact_number || null,
+      position: seededEmployee.position,
+      hire_date: seededEmployee.hire_date,
+      base_salary: seededEmployee.base_salary,
+      pay_frequency: seededEmployee.pay_frequency,
+      employment_type: seededEmployee.employment_type || 'regular',
+      tin_number: seededEmployee.tin_number || null,
+      sss_number: seededEmployee.sss_number || null,
+      philhealth_number: seededEmployee.philhealth_number || null,
+      pagibig_number: seededEmployee.pagibig_number || null,
+      date_of_birth: seededEmployee.date_of_birth || null,
+      gender: seededEmployee.gender || null,
+      civil_status: seededEmployee.civil_status || null,
+      citizenship: seededEmployee.citizenship || 'Filipino',
+      educational_level: seededEmployee.educational_level || null,
+      height_cm: seededEmployee.height_cm || null,
+      residential_address: seededEmployee.residential_address || null,
+      provincial_address: seededEmployee.provincial_address || null,
+      place_of_birth: seededEmployee.place_of_birth || null,
+      blood_type: seededEmployee.blood_type || null,
+      emergency_contact_name: seededEmployee.emergency_contact_name || null,
+      emergency_contact_number: seededEmployee.emergency_contact_number || null,
+      emergency_contact_relationship: seededEmployee.emergency_contact_relationship || null,
+      badge_number: seededEmployee.badge_number || null,
+      license_number: seededEmployee.license_number || null,
+      license_expiry_date: seededEmployee.license_expiry_date || null,
+      latitude: seededEmployee.latitude ?? null,
+      longitude: seededEmployee.longitude ?? null,
     });
 
     if (error) {
       throw new Error(`Employee insert failed for ${emp.contact_email}: ${error.message}`);
     }
 
+    await insertEmployeeArtifacts(id, seededEmployee, seedAssets);
+
     console.log(`  OK employee: ${emp.position} - ${emp.first_name} ${emp.last_name}`);
   }
 
   console.log('\nSeeding clients...');
   for (const client of clients) {
+    const seededClient = buildClientSeed(client, seedAssets);
+    assertValidProfileSeed(seededClient);
     const id = await createAuthUser(client.contact_email, DEFAULT_PASSWORD);
-    await insertProfile(id, client);
+    await insertProfile(id, seededClient);
 
     const { error } = await supabase.from('clients').insert({
       id,
-      company: client.company,
-      billing_address: client.billing_address,
-      contract_start_date: client.contract_start_date,
-      contract_end_date: client.contract_end_date,
-      rate_per_guard: client.rate_per_guard,
-      billing_type: client.billing_type,
+      company: seededClient.company,
+      billing_address: seededClient.billing_address,
+      contract_start_date: seededClient.contract_start_date,
+      contract_end_date: seededClient.contract_end_date,
+      rate_per_guard: seededClient.rate_per_guard,
+      billing_type: seededClient.billing_type,
+      contract_url: seededClient.contract_url,
     });
 
     if (error) {

@@ -16,28 +16,33 @@
  */
 
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
+const { uploadBufferToCloudinary } = require('../../config/cloudinary');
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+const SEED_DIRECTORY = __dirname;
+const uploadedSeedAssetUrls = new Map();
 
 const siteBlueprints = {
   'Golden Pacific Realty': [
     {
       site_name: 'Pacific Tower Main Lobby',
-      site_address: '25F Pacific Tower, Makati Ave, Makati City',
-      latitude: 14.5567,
-      longitude: 121.0235,
+      site_address: 'Aseana Square, Bradco Avenue, Tambo, Paranaque City',
+      latitude: 14.5261,
+      longitude: 120.9924,
       geofence_radius_meters: 80,
       is_active: false,
     },
     {
       site_name: 'Pacific Tower Parking Annex',
-      site_address: '27 Makati Ave, Makati City',
-      latitude: 14.5575,
-      longitude: 121.0247,
+      site_address: 'Aseana West Service Road, Tambo, Paranaque City',
+      latitude: 14.5249,
+      longitude: 120.9912,
       geofence_radius_meters: 90,
       is_active: false,
     },
@@ -45,17 +50,17 @@ const siteBlueprints = {
   'Metro Edge Logistics': [
     {
       site_name: 'Warehouse A',
-      site_address: '88 Warehouse Rd, Pasig City',
-      latitude: 14.5814,
-      longitude: 121.0672,
+      site_address: 'Dr. A. Santos Avenue, San Dionisio, Paranaque City',
+      latitude: 14.4798,
+      longitude: 120.9998,
       geofence_radius_meters: 120,
       is_active: false,
     },
     {
       site_name: 'Crossdock Yard',
-      site_address: '90 Logistics Loop, Pasig City',
-      latitude: 14.5829,
-      longitude: 121.0694,
+      site_address: 'Sucat Logistics Compound, Dr. A. Santos Avenue, Paranaque City',
+      latitude: 14.4709,
+      longitude: 121.0192,
       geofence_radius_meters: 140,
       is_active: false,
     },
@@ -63,17 +68,17 @@ const siteBlueprints = {
   'Sunrise Mall Corp': [
     {
       site_name: 'Mall Perimeter',
-      site_address: 'Sunrise Mall, Commonwealth Ave, Quezon City',
-      latitude: 14.6508,
-      longitude: 121.0315,
+      site_address: 'UN Avenue Commercial Center, Ermita, Manila City',
+      latitude: 14.5826,
+      longitude: 120.9847,
       geofence_radius_meters: 150,
       is_active: true,
     },
     {
       site_name: 'North Entrance',
-      site_address: 'Sunrise Mall North Wing, Quezon City',
-      latitude: 14.6517,
-      longitude: 121.0328,
+      site_address: 'Kalaw Avenue North Arcade, Ermita, Manila City',
+      latitude: 14.5812,
+      longitude: 120.9819,
       geofence_radius_meters: 110,
       is_active: true,
     },
@@ -81,17 +86,17 @@ const siteBlueprints = {
   'Vista Homes Development': [
     {
       site_name: 'Lakeside Main Gate',
-      site_address: '12 Lakeside Dr, Taguig City',
-      latitude: 14.5179,
-      longitude: 121.0555,
+      site_address: 'Ninoy Aquino Avenue Residential Gate, Don Galo, Paranaque City',
+      latitude: 14.5084,
+      longitude: 120.9951,
       geofence_radius_meters: 100,
       is_active: true,
     },
     {
       site_name: 'Clubhouse and Amenities',
-      site_address: '14 Lakeside Dr, Taguig City',
-      latitude: 14.5186,
-      longitude: 121.0566,
+      site_address: 'Better Living Clubhouse Drive, Don Bosco, Paranaque City',
+      latitude: 14.4863,
+      longitude: 121.0384,
       geofence_radius_meters: 75,
       is_active: true,
     },
@@ -99,17 +104,17 @@ const siteBlueprints = {
   'PrimeTech Solutions': [
     {
       site_name: 'Innovation Hub Lobby',
-      site_address: '9F Innovation Hub, BGC, Taguig City',
-      latitude: 14.5512,
-      longitude: 121.0489,
+      site_address: 'Aseana One Lobby, Diosdado Macapagal Boulevard, Paranaque City',
+      latitude: 14.5308,
+      longitude: 120.9898,
       geofence_radius_meters: 60,
       is_active: true,
     },
     {
       site_name: 'Data Center Receiving Bay',
-      site_address: '8F Innovation Hub Annex, BGC, Taguig City',
-      latitude: 14.5502,
-      longitude: 121.0497,
+      site_address: 'Aseana Service Bay, Diosdado Macapagal Boulevard, Paranaque City',
+      latitude: 14.5296,
+      longitude: 120.9909,
       geofence_radius_meters: 85,
       is_active: true,
     },
@@ -418,6 +423,33 @@ function formatDate(date) {
   return date.toISOString().split('T')[0];
 }
 
+async function uploadSeedAsset(cacheKey, fileName, folder) {
+  const existingUrl = uploadedSeedAssetUrls.get(cacheKey);
+  if (existingUrl) {
+    return existingUrl;
+  }
+
+  const filePath = path.join(SEED_DIRECTORY, fileName);
+  const buffer = fs.readFileSync(filePath);
+  const url = await uploadBufferToCloudinary(buffer, folder);
+  uploadedSeedAssetUrls.set(cacheKey, url);
+  return url;
+}
+
+async function getSharedDeploymentAssets() {
+  return {
+    deploymentOrderUrl: await uploadSeedAsset(
+      'deployment-order',
+      'dummy.pdf',
+      'prism_guard/employees/deployment_orders/seed'
+    ),
+  };
+}
+
+function coordinateOffset(value, delta) {
+  return Number((Number(value) + delta).toFixed(6));
+}
+
 async function insertClientSites(clientsByCompany) {
   console.log('\nCreating client sites...');
 
@@ -457,7 +489,7 @@ async function insertClientSites(clientsByCompany) {
   return createdSites;
 }
 
-async function insertDeploymentsAndAttendance(employeesByEmail, sitesByKey) {
+async function insertDeploymentsAndAttendance(employeesByEmail, sitesByKey, seedAssets) {
   console.log('\nCreating deployments, schedules, and attendance...');
 
   const createdDeployments = [];
@@ -488,6 +520,7 @@ async function insertDeploymentsAndAttendance(employeesByEmail, sitesByKey) {
       .insert({
         employee_id: employee.employee_id,
         site_id: site.id,
+        deployment_order_url: seedAssets.deploymentOrderUrl,
         start_date: plan.start_date,
         end_date: null,
         status: plan.status,
@@ -518,18 +551,64 @@ async function insertDeploymentsAndAttendance(employeesByEmail, sitesByKey) {
     }
 
     if (plan.attendance_status) {
-      const now = new Date();
-      const { error: attendanceError } = await supabase.from('attendance_logs').insert({
+      const clockIn = new Date();
+      clockIn.setUTCHours(0, 30, 0, 0);
+      const clockOut = new Date(clockIn);
+      clockOut.setUTCHours(clockIn.getUTCHours() + 8, 30, 0, 0);
+
+      const inLatitude = coordinateOffset(site.latitude, 0.00018);
+      const inLongitude = coordinateOffset(site.longitude, -0.00014);
+      const outLatitude = coordinateOffset(site.latitude, -0.00011);
+      const outLongitude = coordinateOffset(site.longitude, 0.00016);
+
+      const { data: attendanceLog, error: attendanceError } = await supabase.from('attendance_logs').insert({
         employee_id: employee.employee_id,
         site_id: site.id,
         schedule_id: schedule.id,
-        log_date: formatDate(now),
-        clock_in: now.toISOString(),
+        log_date: formatDate(clockIn),
+        clock_in: clockIn.toISOString(),
+        clock_out: clockOut.toISOString(),
+        in_latitude: inLatitude,
+        in_longitude: inLongitude,
+        out_latitude: outLatitude,
+        out_longitude: outLongitude,
         status: plan.attendance_status,
-      });
+      }).select().single();
 
       if (attendanceError) {
         throw new Error(`Attendance failed for ${employee.name}: ${attendanceError.message}`);
+      }
+
+      const locationPings = [
+        {
+          attendance_log_id: attendanceLog.id,
+          employee_id: employee.employee_id,
+          latitude: inLatitude,
+          longitude: inLongitude,
+          is_within_geofence: true,
+          ping_time: new Date(clockIn.getTime() + 15 * 60 * 1000).toISOString(),
+        },
+        {
+          attendance_log_id: attendanceLog.id,
+          employee_id: employee.employee_id,
+          latitude: coordinateOffset(site.latitude, 0.00005),
+          longitude: coordinateOffset(site.longitude, -0.00004),
+          is_within_geofence: true,
+          ping_time: new Date(clockIn.getTime() + 4 * 60 * 60 * 1000).toISOString(),
+        },
+        {
+          attendance_log_id: attendanceLog.id,
+          employee_id: employee.employee_id,
+          latitude: outLatitude,
+          longitude: outLongitude,
+          is_within_geofence: true,
+          ping_time: new Date(clockOut.getTime() - 10 * 60 * 1000).toISOString(),
+        },
+      ];
+
+      const { error: pingError } = await supabase.from('location_pings').insert(locationPings);
+      if (pingError) {
+        throw new Error(`Location pings failed for ${employee.name}: ${pingError.message}`);
       }
     }
 
@@ -682,6 +761,9 @@ async function insertServiceTickets(clientsByCompany, employeesByEmail, sitesByK
 
 async function seed() {
   console.log('Starting deployment seed...\n');
+  console.log('Uploading shared deployment assets...');
+  const seedAssets = await getSharedDeploymentAssets();
+  console.log('  OK shared deployment assets uploaded.');
 
   const { data: clients, error: clientsError } = await supabase
     .from('clients')
@@ -738,7 +820,7 @@ async function seed() {
     return acc;
   }, {});
 
-  await insertDeploymentsAndAttendance(employeesByEmail, sitesByKey);
+  await insertDeploymentsAndAttendance(employeesByEmail, sitesByKey, seedAssets);
   await insertPayroll(employeesByEmail);
   await insertBillings(clientsByCompany);
   await insertServiceTickets(clientsByCompany, employeesByEmail, sitesByKey);

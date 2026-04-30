@@ -7,6 +7,7 @@ const authRoutes = require('@routes/authRoutes');
 const profileRoutes = require('@routes/profileRoutes');
 const employeeRoutes = require('@routes/employeeRoutes');
 const clientRoutes = require('@routes/clientRoutes');
+const adminRoutes = require('@routes/adminRoutes');
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use('/api/web/auth', authRoutes);
 app.use('/api/web/profile', profileRoutes);
 app.use('/api/web/employees', employeeRoutes);
 app.use('/api/web/clients', clientRoutes);
+app.use('/api/web/admins', adminRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
