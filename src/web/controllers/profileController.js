@@ -1,4 +1,5 @@
 const { supabaseAdmin } = require('@src/supabaseClient');
+const { getProfilePermissions, isValidAdminRole } = require('@utils/adminPermissions');
 
 /**
  * GET /api/web/profile/me
@@ -11,7 +12,7 @@ async function getProfile(req, res) {
     // Fetch comprehensive profile data
     const { data: profile, error } = await supabaseAdmin
       .from('profiles')
-      .select('first_name, middle_name, last_name, contact_email, phone_number, role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
+      .select('first_name, middle_name, last_name, contact_email, phone_number, role, admin_role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
       .eq('id', userId)
       .single();
 
@@ -23,6 +24,14 @@ async function getProfile(req, res) {
     const client = profile.clients?.[0] || profile.clients || {};
     delete profile.employees;
     delete profile.clients;
+    const normalizedAdminRole = profile.role === 'admin' && isValidAdminRole(profile.admin_role)
+      ? profile.admin_role
+      : null;
+    profile.admin_role = normalizedAdminRole;
+    profile.permissions = getProfilePermissions({
+      role: profile.role,
+      admin_role: normalizedAdminRole,
+    });
     profile.position = emp.position || null;
     profile.employee_id_number = emp.employee_id_number || null;
     profile.hire_date = emp.hire_date || null;

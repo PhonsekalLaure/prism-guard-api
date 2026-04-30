@@ -1,5 +1,5 @@
 const express = require('express');
-const { requireAuth, requireRole } = require('@middlewares/authMiddleware');
+const { requireAuth, requireRole, requireAdminPermission } = require('@middlewares/authMiddleware');
 const paginationMiddleware = require('@middlewares/paginationMiddleware');
 const filterMiddleware = require('@middlewares/filterMiddleware');
 const {
@@ -25,34 +25,34 @@ const router = express.Router();
 router.use(requireAuth, requireRole('admin'));
 
 // GET /api/web/employees
-router.get('/', paginationMiddleware(6), filterMiddleware, getAllEmployees);
+router.get('/', requireAdminPermission('employees.read'), paginationMiddleware(6), filterMiddleware, getAllEmployees);
 
 // POST /api/web/employees (handle any incoming multi-part files)
-router.post('/', upload.any(), createEmployee);
+router.post('/', requireAdminPermission('employees.write'), upload.any(), createEmployee);
 
 // GET /api/web/employees/stats (Must be before /:id)
-router.get('/stats', requireRole('admin'), getEmployeeStats);
+router.get('/stats', requireAdminPermission('employees.read'), getEmployeeStats);
 
 // GET /api/web/employees/next-id (Must be before /:id)
-router.get('/next-id', requireRole('admin'), getNextEmployeeId);
+router.get('/next-id', requireAdminPermission('employees.read'), getNextEmployeeId);
 
 // GET /api/web/employees/deployable (Must be before /:id)
-router.get('/deployable', requireRole('admin'), getDeployableEmployees);
+router.get('/deployable', requireAdminPermission('employees.read'), getDeployableEmployees);
 
 
 // GET /api/web/employees/:id
-router.get('/:id', requireRole('admin'), getEmployeeDetails);
+router.get('/:id', requireAdminPermission('employees.read'), getEmployeeDetails);
 
 // PATCH /api/web/employees/:id
-router.patch('/:id', upload.any(), updateEmployee);
+router.patch('/:id', requireAdminPermission('employees.write'), upload.any(), updateEmployee);
 
 // POST /api/web/employees/:id/deploy
-router.post('/:id/deploy', upload.any(), deployEmployee);
+router.post('/:id/deploy', requireAdminPermission('employees.write'), upload.any(), deployEmployee);
 
 // POST /api/web/employees/:id/transfer
-router.post('/:id/transfer', upload.any(), transferEmployeeAssignment);
+router.post('/:id/transfer', requireAdminPermission('employees.write'), upload.any(), transferEmployeeAssignment);
 
 // POST /api/web/employees/:id/relieve
-router.post('/:id/relieve', relieveEmployeeAssignment);
+router.post('/:id/relieve', requireAdminPermission('employees.write'), relieveEmployeeAssignment);
 
 module.exports = router;

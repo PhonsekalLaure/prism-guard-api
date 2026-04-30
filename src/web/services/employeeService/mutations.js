@@ -89,9 +89,15 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
   let userId = null;
 
   try {
+    const email = data.email.trim().toLowerCase();
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-      data.email,
-      { redirectTo: 'http://localhost:5173/set-password' }
+      email,
+      { 
+        redirectTo: 'http://localhost:5173/set-password',
+        data: {
+          must_change_password: true,
+        }
+      }
     );
 
     if (authError) throw authError;
@@ -105,7 +111,7 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
         middle_name: middleName,
         last_name: lastName,
         suffix,
-        contact_email: data.email,
+        contact_email: email,
         phone_number: mobile,
         avatar_url: avatarUrl,
         role: 'employee',
