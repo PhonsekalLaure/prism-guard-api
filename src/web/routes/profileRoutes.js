@@ -9,4 +9,10 @@ router.use(requireAuth);
 // GET  /api/web/profile/me
 router.get('/me', profileController.getProfile);
 
+// PATCH /api/web/profile/me — update contact person fields
+router.patch('/me', profileController.updateContactPerson);
+
+// POST /api/web/profile/change-password
+router.post('/change-password', profileController.changePassword);
+
 module.exports = router;
