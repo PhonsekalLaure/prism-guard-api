@@ -1,4 +1,9 @@
 const { supabase, supabaseAdmin } = require('@src/supabaseClient');
+const {
+  assertValidAdminScope,
+  getProfilePermissions,
+  isValidAdminRole,
+} = require('@utils/adminPermissions');
 
 /**
  * Middleware: requireAuth
@@ -29,7 +34,7 @@ async function requireAuth(req, res, next) {
     // Fetch associated profile
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
-      .select('first_name, last_name, role, avatar_url, status')
+      .select('first_name, last_name, role, admin_role, avatar_url, status')
       .eq('id', user.id)
       .single();
 
@@ -41,9 +46,21 @@ async function requireAuth(req, res, next) {
       return res.status(403).json({ error: 'Account has been deactivated' });
     }
 
+    try {
+      assertValidAdminScope(profile);
+    } catch (err) {
+      return res.status(err.status || 403).json({ error: err.message });
+    }
+
     // Attach to request for downstream handlers
     req.user = user;
-    req.profile = profile;
+    req.profile = {
+      ...profile,
+      admin_role: profile.role === 'admin' && isValidAdminRole(profile.admin_role)
+        ? profile.admin_role
+        : null,
+      permissions: getProfilePermissions(profile),
+    };
 
     next();
   } catch (err) {
@@ -79,4 +96,51 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { requireAuth, requireRole };
+function requireAdminRole(...adminRoles) {
+  return (req, res, next) => {
+    if (!req.profile) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    if (req.profile.role !== 'admin') {
+      return res.status(403).json({
+        error: 'You do not have permission to access this resource',
+      });
+    }
+
+    if (!adminRoles.includes(req.profile.admin_role)) {
+      return res.status(403).json({
+        error: 'You do not have permission to access this resource',
+      });
+    }
+
+    next();
+  };
+}
+
+function requireAdminPermission(...permissions) {
+  return (req, res, next) => {
+    if (!req.profile) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    if (req.profile.role !== 'admin') {
+      return res.status(403).json({
+        error: 'You do not have permission to access this resource',
+      });
+    }
+
+    const profilePermissions = Array.isArray(req.profile.permissions) ? req.profile.permissions : [];
+    const hasAllPermissions = permissions.every((permission) => profilePermissions.includes(permission));
+
+    if (!hasAllPermissions) {
+      return res.status(403).json({
+        error: 'You do not have permission to access this resource',
+      });
+    }
+
+    next();
+  };
+}
+
+module.exports = { requireAuth, requireRole, requireAdminRole, requireAdminPermission };

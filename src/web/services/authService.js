@@ -1,4 +1,9 @@
 const { supabase, supabaseAdmin } = require('@src/supabaseClient');
+const {
+  assertValidAdminScope,
+  getProfilePermissions,
+  isValidAdminRole,
+} = require('@utils/adminPermissions');
 
 /**
  * Roles that are allowed to log in through the web portal.
@@ -6,6 +11,44 @@ const { supabase, supabaseAdmin } = require('@src/supabaseClient');
  * - client → CMS dashboard
  */
 const WEB_ALLOWED_ROLES = ['admin', 'client'];
+
+function buildWebProfile(profile) {
+  const emp = profile.employees?.[0] || profile.employees || {};
+  const client = profile.clients?.[0] || profile.clients || {};
+  const normalizedAdminRole = profile.role === 'admin' && isValidAdminRole(profile.admin_role)
+    ? profile.admin_role
+    : null;
+
+  return {
+    first_name: profile.first_name,
+    middle_name: profile.middle_name,
+    last_name: profile.last_name,
+    role: profile.role,
+    admin_role: normalizedAdminRole,
+    permissions: getProfilePermissions({
+      role: profile.role,
+      admin_role: normalizedAdminRole,
+    }),
+    avatar_url: profile.avatar_url,
+    position: emp.position || null,
+    employee_id_number: emp.employee_id_number || null,
+    hire_date: emp.hire_date || null,
+    company: client.company || null,
+    billing_address: client.billing_address || null,
+  };
+}
+
+function requiresPasswordReset(user) {
+  return user?.user_metadata?.must_change_password === true;
+}
+
+function getRedirectForProfile(profile, user) {
+  if (requiresPasswordReset(user)) {
+    return '/set-password';
+  }
+
+  return profile.role === 'admin' ? '/dashboard' : '/cms/dashboard';
+}
 
 /**
  * Authenticate a user with email + password via Supabase Auth,
@@ -31,7 +74,7 @@ async function login(email, password) {
   // 2. Fetch the user's profile (role, name, avatar, etc.)
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
-    .select('first_name, middle_name, last_name, role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
+    .select('first_name, middle_name, last_name, role, admin_role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
     .eq('id', user.id)
     .single();
 
@@ -55,12 +98,11 @@ async function login(email, password) {
     throw err;
   }
 
-  // 5. Determine redirect path based on role
-  const redirect = profile.role === 'admin' ? '/dashboard' : '/cms/dashboard';
+  assertValidAdminScope(profile);
 
-  // Position logic handling 1-to-X relation
-  const emp = profile.employees?.[0] || profile.employees || {};
-  const client = profile.clients?.[0] || profile.clients || {};
+  // 5. Determine redirect path based on role
+  const must_change_password = requiresPasswordReset(user);
+  const redirect = getRedirectForProfile(profile, user);
 
   return {
     user: { id: user.id, email: user.email },
@@ -68,18 +110,8 @@ async function login(email, password) {
       access_token: session.access_token,
       refresh_token: session.refresh_token,
     },
-    profile: {
-      first_name: profile.first_name,
-      middle_name: profile.middle_name,
-      last_name: profile.last_name,
-      role: profile.role,
-      avatar_url: profile.avatar_url,
-      position: emp.position || null,
-      employee_id_number: emp.employee_id_number || null,
-      hire_date: emp.hire_date || null,
-      company: client.company || null,
-      billing_address: client.billing_address || null,
-    },
+    profile: buildWebProfile(profile),
+    must_change_password,
     redirect,
   };
 }
@@ -105,7 +137,7 @@ async function getMe(accessToken) {
   // Fetch profile
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
-    .select('first_name, middle_name, last_name, role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
+    .select('first_name, middle_name, last_name, role, admin_role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
     .eq('id', user.id)
     .single();
 
@@ -127,25 +159,15 @@ async function getMe(accessToken) {
     throw err;
   }
 
-  const redirect = profile.role === 'admin' ? '/dashboard' : '/cms/dashboard';
+  assertValidAdminScope(profile);
 
-  const emp = profile.employees?.[0] || profile.employees || {};
-  const client = profile.clients?.[0] || profile.clients || {};
+  const must_change_password = requiresPasswordReset(user);
+  const redirect = getRedirectForProfile(profile, user);
 
   return {
     user: { id: user.id, email: user.email },
-    profile: {
-      first_name: profile.first_name,
-      middle_name: profile.middle_name,
-      last_name: profile.last_name,
-      role: profile.role,
-      avatar_url: profile.avatar_url,
-      position: emp.position || null,
-      employee_id_number: emp.employee_id_number || null,
-      hire_date: emp.hire_date || null,
-      company: client.company || null,
-      billing_address: client.billing_address || null,
-    },
+    profile: buildWebProfile(profile),
+    must_change_password,
     redirect,
   };
 }
@@ -156,15 +178,11 @@ async function getMe(accessToken) {
  * @param {string} accessToken
  */
 async function logout(accessToken) {
-  // Verify the token to get the user id, then sign them out via admin API
-  const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-
-  if (error || !user) {
-    // Token already invalid — nothing to do
+  if (!accessToken) {
     return;
   }
 
-  await supabaseAdmin.auth.admin.signOut(user.id);
+  await supabaseAdmin.auth.admin.signOut(accessToken);
 }
 
 module.exports = { login, getMe, logout };
