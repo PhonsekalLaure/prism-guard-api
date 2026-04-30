@@ -10,7 +10,7 @@ async function getProfile(req, res) {
 
     const { data: profile, error } = await supabaseAdmin
       .from('profiles')
-      .select('first_name, middle_name, last_name, contact_email, phone_number, role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address)')
+      .select('id, first_name, middle_name, last_name, contact_email, phone_number, role, avatar_url, status, employees(position, employee_id_number, hire_date), clients(company, billing_address, billing_type, contract_start_date, contract_end_date, rate_per_guard)')
       .eq('id', userId)
       .single();
 
@@ -22,11 +22,27 @@ async function getProfile(req, res) {
     const client = profile.clients?.[0]   || profile.clients   || {};
     delete profile.employees;
     delete profile.clients;
-    profile.position           = emp.position           || null;
-    profile.employee_id_number = emp.employee_id_number || null;
-    profile.hire_date          = emp.hire_date          || null;
-    profile.company            = client.company         || null;
-    profile.billing_address    = client.billing_address || null;
+    profile.position              = emp.position              || null;
+    profile.employee_id_number    = emp.employee_id_number    || null;
+    profile.hire_date             = emp.hire_date             || null;
+    profile.company               = client.company            || null;
+    profile.billing_address       = client.billing_address    || null;
+    profile.billing_type          = client.billing_type       || null;
+    profile.contract_start_date   = client.contract_start_date || null;
+    profile.contract_end_date     = client.contract_end_date  || null;
+    profile.rate_per_guard        = client.rate_per_guard     || null;
+
+    // Derive contract_status from dates
+    const now = new Date();
+    if (client.contract_start_date && client.contract_end_date) {
+      const start = new Date(client.contract_start_date);
+      const end   = new Date(client.contract_end_date);
+      if (now < start)       profile.contract_status = 'Upcoming';
+      else if (now > end)    profile.contract_status = 'Expired';
+      else                   profile.contract_status = 'Active';
+    } else {
+      profile.contract_status = null;
+    }
 
     return res.json(profile);
   } catch (err) {
