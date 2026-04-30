@@ -1,4 +1,4 @@
-const profileService = require('@services/profileService');
+const { supabaseAdmin } = require('@src/supabaseClient');
 
 /**
  * GET /api/web/profile/me
@@ -30,20 +30,4 @@ async function updateContactPerson(req, res) {
   }
 }
 
-/**
- * POST /api/web/profile/change-password
- * Body: { currentPassword, newPassword, confirmPassword }
- */
-async function changePassword(req, res) {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    const result = await profileService.changePassword(token, req.user.id, req.body);
-    return res.json(result);
-  } catch (err) {
-    console.error('[changePassword Error]:', err);
-    const status = err.status || 500;
-    return res.status(status).json({ error: err.message });
-  }
-}
-
-module.exports = { getProfile, updateContactPerson, changePassword };
+module.exports = { getProfile };
