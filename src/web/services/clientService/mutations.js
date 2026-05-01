@@ -4,13 +4,14 @@ const {
   normalizeMobileNumber,
   rollbackProvisionedUser,
 } = require('./shared');
+const { sendInviteEmail } = require('@services/inviteService');
 const {
   toProperCase,
   normalizeClientSites,
 } = require('./helpers');
 const employeeService = require('@services/employeeService');
 
-async function createClient(data) {
+async function createClient(data, actorUserId) {
   const firstName = toProperCase(data.firstName);
   const lastName = toProperCase(data.lastName);
   const middleName = data.middleName ? toProperCase(data.middleName) : null;
@@ -62,15 +63,7 @@ async function createClient(data) {
 
   try {
     const email = data.email.trim().toLowerCase();
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-      email,
-      { 
-        redirectTo: 'http://localhost:5173/set-password',
-        data: {
-          must_change_password: true,
-        }
-      }
-    );
+    const { data: authData, error: authError } = await sendInviteEmail(email, actorUserId);
     if (authError) throw authError;
 
     userId = authData.user.id;
@@ -248,7 +241,156 @@ async function updateClient(id, data) {
   return { success: true };
 }
 
+async function getClientForStatusChange(clientId) {
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .select('id, role, status')
+    .eq('id', clientId)
+    .eq('role', 'client')
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!data) {
+    const err = new Error('Client not found');
+    err.status = 404;
+    throw err;
+  }
+
+  return data;
+}
+
+async function deactivateClient(clientId) {
+  const clientProfile = await getClientForStatusChange(clientId);
+
+  if (clientProfile.status === 'inactive') {
+    throw buildBadRequestError('Client is already inactive.');
+  }
+
+  const { data: clientSites, error: sitesError } = await supabaseAdmin
+    .from('client_sites')
+    .select('id')
+    .eq('client_id', clientId);
+
+  if (sitesError) throw sitesError;
+
+  const siteIds = (clientSites || []).map((site) => site.id);
+
+  if (siteIds.length > 0) {
+    const { data: activeDeployment, error: deploymentError } = await supabaseAdmin
+      .from('deployments')
+      .select('id')
+      .in('site_id', siteIds)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+
+    if (deploymentError) throw deploymentError;
+
+    if (activeDeployment?.id) {
+      throw buildBadRequestError('Relieve or transfer all active guards before deactivating this client.');
+    }
+  }
+
+  const deletedAt = new Date().toISOString();
+
+  const { error: profileError } = await supabaseAdmin
+    .from('profiles')
+    .update({
+      status: 'inactive',
+      deleted_at: deletedAt,
+    })
+    .eq('id', clientId)
+    .eq('role', 'client');
+
+  if (profileError) throw profileError;
+
+  if (siteIds.length > 0) {
+    const { error: siteUpdateError } = await supabaseAdmin
+      .from('client_sites')
+      .update({ is_active: false })
+      .eq('client_id', clientId)
+      .eq('is_active', true);
+
+    if (siteUpdateError) {
+      await supabaseAdmin
+        .from('profiles')
+        .update({
+          status: clientProfile.status,
+          deleted_at: null,
+        })
+        .eq('id', clientId)
+        .eq('role', 'client');
+      throw siteUpdateError;
+    }
+  }
+
+  return {
+    success: true,
+    client_id: clientId,
+    status: 'inactive',
+    deleted_at: deletedAt,
+    deactivated_site_count: siteIds.length,
+  };
+}
+
+async function relieveAllClientGuards(clientId, options = {}) {
+  await getClientForStatusChange(clientId);
+
+  const reliefDate = options.reliefDate || null;
+
+  const { data: clientSites, error: sitesError } = await supabaseAdmin
+    .from('client_sites')
+    .select('id')
+    .eq('client_id', clientId)
+    .eq('is_active', true);
+
+  if (sitesError) throw sitesError;
+
+  const siteIds = (clientSites || []).map((site) => site.id);
+  if (siteIds.length === 0) {
+    throw buildBadRequestError('Client does not have any active sites to relieve guards from.');
+  }
+
+  const { data: deployments, error: deploymentsError } = await supabaseAdmin
+    .from('deployments')
+    .select('employee_id, site_id, start_date')
+    .in('site_id', siteIds)
+    .eq('status', 'active')
+    .order('start_date', { ascending: false });
+
+  if (deploymentsError) throw deploymentsError;
+
+  const activeDeployments = deployments || [];
+  if (activeDeployments.length === 0) {
+    throw buildBadRequestError('No active guards are currently deployed to this client.');
+  }
+
+  const relievedEmployeeIds = [];
+
+  for (const deployment of activeDeployments) {
+    try {
+      await employeeService.relieveEmployeeAssignment(deployment.employee_id, { reliefDate });
+      relievedEmployeeIds.push(deployment.employee_id);
+    } catch (err) {
+      if (relievedEmployeeIds.length > 0) {
+        err.message = `Relieved ${relievedEmployeeIds.length} guard(s) before failure. ${err.message}`;
+      }
+      throw err;
+    }
+  }
+
+  return {
+    success: true,
+    client_id: clientId,
+    relieved_guard_count: relievedEmployeeIds.length,
+    relieved_employee_ids: relievedEmployeeIds,
+  };
+}
+
 module.exports = {
   createClient,
   updateClient,
+  deactivateClient,
+  relieveAllClientGuards,
 };

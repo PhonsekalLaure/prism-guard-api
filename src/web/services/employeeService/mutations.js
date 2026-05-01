@@ -5,10 +5,12 @@ const {
   normalizeAddressWithCoordinates,
   rollbackProvisionedUser,
 } = require('./shared');
+const { sendInviteEmail } = require('@services/inviteService');
 const {
   toProperCase,
   CLEARANCE_EXPIRY_YEARS,
-  normalizeContractDates,
+  normalizeDateRange,
+  validateDateIsTodayOrLater,
   normalizeSchedule,
   getEmployeeProfileForDeployment,
   getActiveSiteAssignment,
@@ -63,6 +65,7 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
     shiftEnd,
     deploymentOrderUrl,
     initialSiteId,
+    actorUserId,
   } = extras;
   if (!contractDocUrl) {
     throw buildBadRequestError('Employee onboarding requires an employment contract document.');
@@ -72,14 +75,26 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
   const shouldCreateDeployment = !!initialSiteId;
   const shouldCreateContract = true;
   const { contractStartDate, contractEndDate: normalizedContractEndDate } = shouldCreateContract
-    ? normalizeContractDates(data.hireDate, contractEndDate, data.hireDate)
+    ? normalizeDateRange(data.hireDate, contractEndDate, {
+      startLabel: 'Employment contract start date',
+      endLabel: 'Employment contract end date',
+      fallbackStartDate: data.hireDate,
+    })
     : { contractStartDate: null, contractEndDate: null };
   const { contractStartDate: normalizedDeploymentStartDate, contractEndDate: normalizedDeploymentEndDate } = shouldCreateDeployment
-    ? normalizeContractDates(deploymentStartDate, deploymentEndDate, data.hireDate)
+    ? normalizeDateRange(deploymentStartDate, deploymentEndDate, {
+      startLabel: 'Deployment start date',
+      endLabel: 'Deployment end date',
+      fallbackStartDate: data.hireDate,
+    })
     : { contractStartDate: null, contractEndDate: null };
   const normalizedSchedule = shouldCreateDeployment
     ? normalizeSchedule({ daysOfWeek, shiftStart, shiftEnd })
     : null;
+  const normalizedLicenseExpiryDate = validateDateIsTodayOrLater(
+    data.licenseExpiryDate || null,
+    'License expiry date'
+  );
 
   let siteAssignment = null;
   if (shouldCreateDeployment) {
@@ -90,15 +105,7 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
 
   try {
     const email = data.email.trim().toLowerCase();
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-      email,
-      { 
-        redirectTo: 'http://localhost:5173/set-password',
-        data: {
-          must_change_password: true,
-        }
-      }
-    );
+    const { data: authData, error: authError } = await sendInviteEmail(email, actorUserId);
 
     if (authError) throw authError;
     userId = authData.user.id;
@@ -145,7 +152,7 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
         citizenship: data.citizenship || 'Filipino',
         badge_number: data.badgeNumber || null,
         license_number: data.licenseNumber || null,
-        license_expiry_date: data.licenseExpiryDate || null,
+        license_expiry_date: normalizedLicenseExpiryDate,
         emergency_contact_name: toProperCase(data.emergencyName, 'Emergency contact name'),
         emergency_contact_number: emergencyContactNumber,
         emergency_contact_relationship: data.emergencyRelationship
@@ -272,7 +279,12 @@ async function updateEmployee(id, data, clearances = [], avatarUrl = null, deplo
   if (data.blood_type !== undefined) empPatch.blood_type = data.blood_type || null;
   if (data.badge_number !== undefined) empPatch.badge_number = data.badge_number || null;
   if (data.license_number !== undefined) empPatch.license_number = data.license_number || null;
-  if (data.license_expiry_date !== undefined) empPatch.license_expiry_date = data.license_expiry_date || null;
+  if (data.license_expiry_date !== undefined) {
+    empPatch.license_expiry_date = validateDateIsTodayOrLater(
+      data.license_expiry_date || null,
+      'License expiry date'
+    );
+  }
   if (data.residential_address !== undefined || data.latitude !== undefined || data.longitude !== undefined) {
     const normalizedAddress = normalizeAddressWithCoordinates(
       data.residential_address,
@@ -359,6 +371,71 @@ async function updateEmployee(id, data, clearances = [], avatarUrl = null, deplo
   return { success: true };
 }
 
+async function getEmployeeForStatusChange(employeeId) {
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .select('id, role, status')
+    .eq('id', employeeId)
+    .eq('role', 'employee')
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!data) {
+    const err = new Error('Employee not found');
+    err.status = 404;
+    throw err;
+  }
+
+  return data;
+}
+
+async function hasActiveEmployeeDeployment(employeeId) {
+  const { data, error } = await supabaseAdmin
+    .from('deployments')
+    .select('id')
+    .eq('employee_id', employeeId)
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return Boolean(data?.id);
+}
+
+async function deactivateEmployee(employeeId) {
+  const employeeProfile = await getEmployeeForStatusChange(employeeId);
+
+  if (employeeProfile.status === 'inactive') {
+    throw buildBadRequestError('Employee is already inactive.');
+  }
+
+  if (await hasActiveEmployeeDeployment(employeeId)) {
+    throw buildBadRequestError('Relieve the employee from their current assignment before deactivating them.');
+  }
+
+  const deletedAt = new Date().toISOString();
+
+  const { error } = await supabaseAdmin
+    .from('profiles')
+    .update({
+      status: 'inactive',
+      deleted_at: deletedAt,
+    })
+    .eq('id', employeeId)
+    .eq('role', 'employee');
+
+  if (error) throw error;
+
+  return {
+    success: true,
+    employee_id: employeeId,
+    status: 'inactive',
+    deleted_at: deletedAt,
+  }
+}
+
 async function deployEmployee(employeeId, {
   siteId,
   ratePerGuard,
@@ -380,7 +457,10 @@ async function deployEmployee(employeeId, {
   const {
     contractStartDate: normalizedContractStartDate,
     contractEndDate: normalizedContractEndDate,
-  } = normalizeContractDates(contractStartDate, contractEndDate);
+  } = normalizeDateRange(contractStartDate, contractEndDate, {
+    startLabel: 'Deployment contract start date',
+    endLabel: 'Deployment contract end date',
+  });
   const normalizedSchedule = normalizeSchedule({ daysOfWeek, shiftStart, shiftEnd });
   const effectiveContractDocUrl = contractDocUrl || await getLatestContractDocumentUrl(employeeId);
 
@@ -536,7 +616,10 @@ async function transferEmployeeAssignment(employeeId, {
   const {
     contractStartDate: normalizedContractStartDate,
     contractEndDate: normalizedContractEndDate,
-  } = normalizeContractDates(contractStartDate, contractEndDate);
+  } = normalizeDateRange(contractStartDate, contractEndDate, {
+    startLabel: 'Deployment contract start date',
+    endLabel: 'Deployment contract end date',
+  });
   const normalizedSchedule = normalizeSchedule({ daysOfWeek, shiftStart, shiftEnd });
   const effectiveContractDocUrl = contractDocUrl || await getLatestContractDocumentUrl(employeeId);
 
@@ -813,6 +896,7 @@ async function relieveEmployeeAssignment(employeeId, { reliefDate } = {}) {
 module.exports = {
   createEmployee,
   updateEmployee,
+  deactivateEmployee,
   deployEmployee,
   transferEmployeeAssignment,
   relieveEmployeeAssignment,

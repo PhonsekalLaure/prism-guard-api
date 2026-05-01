@@ -102,14 +102,22 @@ async function createEmployee(req, res) {
     const clearancesData = [];
     for (const file of files) {
       if (file.fieldname === 'avatar') {
-        avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/avatars');
+        avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/avatars', {
+          actorKey: req.user?.id,
+        });
       } else if (file.fieldname === 'document_contract') {
-        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts');
+        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts', {
+          actorKey: req.user?.id,
+        });
       } else if (file.fieldname === 'document_deployment_order') {
-        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders');
+        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders', {
+          actorKey: req.user?.id,
+        });
       } else if (file.fieldname.startsWith('document_')) {
         const type = file.fieldname.replace('document_', '');
-        const secureUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/documents');
+        const secureUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/documents', {
+          actorKey: req.user?.id,
+        });
         clearancesData.push({ type, url: secureUrl });
       }
     }
@@ -129,6 +137,7 @@ async function createEmployee(req, res) {
         shiftEnd: data.shiftEnd || null,
         deploymentOrderUrl,
         initialSiteId: data.initialSiteId || null,
+        actorUserId: req.user?.id,
       }
     );
 
@@ -174,12 +183,18 @@ async function updateEmployee(req, res) {
     // Upload any replacement clearance documents to Cloudinary
     for (const file of files) {
       if (file.fieldname === 'avatar') {
-        avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/avatars');
+        avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/avatars', {
+          actorKey: req.user?.id,
+        });
       } else if (file.fieldname === 'document_deployment_order') {
-        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders');
+        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders', {
+          actorKey: req.user?.id,
+        });
       } else if (file.fieldname.startsWith('document_')) {
         const type = file.fieldname.replace('document_', '');
-        const secureUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/documents');
+        const secureUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/documents', {
+          actorKey: req.user?.id,
+        });
         clearancesData.push({ type, url: secureUrl });
       }
     }
@@ -191,6 +206,18 @@ async function updateEmployee(req, res) {
     console.error(err);
     const status = err.status || 500;
     return res.status(status).json({ error: err.message || 'Failed to update employee' });
+  }
+}
+
+async function deactivateEmployee(req, res) {
+  try {
+    const { id } = req.params;
+    const result = await employeeService.deactivateEmployee(id);
+    return res.json({ message: 'Employee deactivated successfully', data: result });
+  } catch (err) {
+    console.error(err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to deactivate employee' });
   }
 }
 
@@ -213,9 +240,13 @@ async function deployEmployee(req, res) {
 
     for (const file of files) {
       if (file.fieldname === 'document_contract') {
-        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts');
+        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts', {
+          actorKey: req.user?.id,
+        });
       } else if (file.fieldname === 'document_deployment_order') {
-        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders');
+        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders', {
+          actorKey: req.user?.id,
+        });
       }
     }
 
@@ -262,9 +293,13 @@ async function transferEmployeeAssignment(req, res) {
 
     for (const file of files) {
       if (file.fieldname === 'document_contract') {
-        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts');
+        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts', {
+          actorKey: req.user?.id,
+        });
       } else if (file.fieldname === 'document_deployment_order') {
-        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders');
+        deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders', {
+          actorKey: req.user?.id,
+        });
       }
     }
 
@@ -316,6 +351,7 @@ module.exports = {
   getEmployeeStats,
   createEmployee,
   updateEmployee,
+  deactivateEmployee,
   deployEmployee,
   transferEmployeeAssignment,
   relieveEmployeeAssignment,

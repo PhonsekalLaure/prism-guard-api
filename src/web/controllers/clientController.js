@@ -111,14 +111,18 @@ async function createClient(req, res) {
 
     for (const file of files) {
       if (file.fieldname === 'avatar') {
-        data.avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/avatars');
+        data.avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/avatars', {
+          actorKey: req.user?.id,
+        });
       } else if (file.fieldname === 'contractUrl') {
-        data.contractUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/contracts');
+        data.contractUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/contracts', {
+          actorKey: req.user?.id,
+        });
       }
     }
 
     // Call service to create user in DB
-    const { userId } = await clientService.createClient(data);
+    const { userId } = await clientService.createClient(data, req.user?.id);
 
     return res.status(201).json({ message: 'Client created and invited successfully', userId });
   } catch (err) {
@@ -139,9 +143,13 @@ async function updateClient(req, res) {
 
     for (const file of files) {
       if (file.fieldname === 'avatar') {
-        data.avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/avatars');
+        data.avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/avatars', {
+          actorKey: req.user?.id,
+        });
       } else if (file.fieldname === 'contractUrl') {
-        data.contractUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/contracts');
+        data.contractUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/contracts', {
+          actorKey: req.user?.id,
+        });
       }
     }
 
@@ -152,6 +160,33 @@ async function updateClient(req, res) {
     console.error('[updateClient Error]:', err);
     const status = err.status || 500;
     return res.status(status).json({ error: err.message || 'Failed to update client' });
+  }
+}
+
+async function deactivateClient(req, res) {
+  try {
+    const { id } = req.params;
+    const result = await clientService.deactivateClient(id);
+    return res.json({ message: 'Client deactivated successfully', data: result });
+  } catch (err) {
+    console.error('[deactivateClient Error]:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to deactivate client' });
+  }
+}
+
+async function relieveAllClientGuards(req, res) {
+  try {
+    const { id } = req.params;
+    const { reliefDate } = req.body || {};
+    const result = await clientService.relieveAllClientGuards(id, {
+      reliefDate: reliefDate || null,
+    });
+    return res.json({ message: 'All client guards relieved successfully', data: result });
+  } catch (err) {
+    console.error('[relieveAllClientGuards Error]:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to relieve client guards' });
   }
 }
 
@@ -176,5 +211,7 @@ module.exports = {
   getClientsList,
   getAllSitesList,
   createClient,
-  updateClient
+  updateClient,
+  deactivateClient,
+  relieveAllClientGuards
 };

@@ -23,32 +23,61 @@ const CLEARANCE_EXPIRY_YEARS = {
   resume: null,
 };
 
-function normalizeContractDates(startDate, endDate, fallbackStartDate = null) {
-  const contractStartDate = startDate || fallbackStartDate || new Date().toISOString().split('T')[0];
-  let contractEndDate = endDate || null;
+function normalizeDateOnly(value, fieldLabel) {
+  if (!value) return null;
 
-  if (Number.isNaN(new Date(contractStartDate).getTime())) {
-    throw buildBadRequestError('Contract start date is invalid.');
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw buildBadRequestError(`${fieldLabel} is invalid.`);
   }
 
-  if (!contractEndDate) {
-    const defaultEndDate = new Date(contractStartDate);
+  return value;
+}
+
+function normalizeDateRange(startDate, endDate, options = {}) {
+  const {
+    startLabel = 'Start date',
+    endLabel = 'End date',
+    fallbackStartDate = null,
+  } = options;
+  const normalizedStartDate = startDate || fallbackStartDate || new Date().toISOString().split('T')[0];
+  let normalizedEndDate = endDate || null;
+
+  normalizeDateOnly(normalizedStartDate, startLabel);
+
+  if (!normalizedEndDate) {
+    const defaultEndDate = new Date(normalizedStartDate);
     defaultEndDate.setFullYear(defaultEndDate.getFullYear() + 1);
-    contractEndDate = defaultEndDate.toISOString().split('T')[0];
+    normalizedEndDate = defaultEndDate.toISOString().split('T')[0];
   }
 
-  if (Number.isNaN(new Date(contractEndDate).getTime())) {
-    throw buildBadRequestError('Contract end date is invalid.');
-  }
+  normalizeDateOnly(normalizedEndDate, endLabel);
 
-  if (new Date(contractEndDate) < new Date(contractStartDate)) {
-    throw buildBadRequestError('Contract end date cannot be earlier than contract start date.');
+  if (new Date(normalizedEndDate) < new Date(normalizedStartDate)) {
+    throw buildBadRequestError(`${endLabel} cannot be earlier than ${startLabel.toLowerCase()}.`);
   }
 
   return {
-    contractStartDate,
-    contractEndDate,
+    contractStartDate: normalizedStartDate,
+    contractEndDate: normalizedEndDate,
   };
+}
+
+function validateDateIsTodayOrLater(value, fieldLabel) {
+  if (!value) return null;
+
+  const normalizedValue = normalizeDateOnly(value, fieldLabel);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const parsedValue = new Date(normalizedValue);
+  parsedValue.setHours(0, 0, 0, 0);
+
+  if (parsedValue < today) {
+    throw buildBadRequestError(`${fieldLabel} cannot be earlier than today.`);
+  }
+
+  return normalizedValue;
 }
 
 function normalizeSchedule(schedule = {}) {
@@ -115,8 +144,8 @@ async function getEmployeeProfileForDeployment(employeeId) {
     throw err;
   }
 
-  if (data.status === 'terminated') {
-    throw buildBadRequestError('Terminated employees cannot be deployed.');
+  if (data.status === 'inactive') {
+    throw buildBadRequestError('Inactive employees cannot be deployed.');
   }
 
   const employee = Array.isArray(data.employees) ? data.employees[0] : data.employees;
@@ -175,7 +204,8 @@ async function getLatestContractDocumentUrl(employeeId) {
 module.exports = {
   toProperCase,
   CLEARANCE_EXPIRY_YEARS,
-  normalizeContractDates,
+  normalizeDateRange,
+  validateDateIsTodayOrLater,
   normalizeSchedule,
   getEmployeeProfileForDeployment,
   getActiveSiteAssignment,

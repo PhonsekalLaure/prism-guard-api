@@ -1,5 +1,6 @@
 const cloudinary = require('cloudinary').v2;
 const streamifier = require('streamifier');
+const { consumeLimiter } = require('@utils/rateLimit');
 
 // Configure Cloudinary using env vars
 cloudinary.config({
@@ -12,9 +13,37 @@ cloudinary.config({
  * Uploads a file buffer to Cloudinary using streams.
  * @param {Buffer} buffer - The file buffer from multer.
  * @param {String} folder - Cloudinary folder name.
+ * @param {Object} options
  * @returns {Promise<String>} - The secure URL of the uploaded image/PDF.
  */
-function uploadBufferToCloudinary(buffer, folder = 'prism_guard_clearances') {
+async function uploadBufferToCloudinary(buffer, folder = 'prism_guard_clearances', options = {}) {
+  const {
+    actorKey = null,
+    bypassRateLimit = false,
+  } = options;
+
+  if (!bypassRateLimit) {
+    await consumeLimiter(
+      'cloudinaryUser',
+      { keyPrefix: 'provider:cloudinary:user', points: 10, duration: 60 },
+      actorKey || 'unknown-actor',
+      {
+        code: 'RATE_LIMITED_CLOUDINARY_USER',
+        message: 'Too many file uploads from this account. Please try again later.',
+      }
+    );
+
+    await consumeLimiter(
+      'cloudinaryGlobal',
+      { keyPrefix: 'provider:cloudinary:global', points: 100, duration: 60 },
+      'global',
+      {
+        code: 'RATE_LIMITED_CLOUDINARY_GLOBAL',
+        message: 'File uploads are temporarily busy. Please try again later.',
+      }
+    );
+  }
+
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
