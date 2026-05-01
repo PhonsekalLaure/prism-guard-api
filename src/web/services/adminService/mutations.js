@@ -4,6 +4,7 @@ const {
   normalizeMobileNumber,
 } = require('@utils/requestValidation');
 const { rollbackProvisionedUser } = require('@utils/userProvisioning');
+const { sendInviteEmail } = require('@services/inviteService');
 const {
   getAdminPermissions,
   isValidAdminRole,
@@ -101,7 +102,7 @@ async function getNextAdminEmployeeId() {
   return `AD-${String(currentNumber + 1).padStart(5, '0')}`;
 }
 
-async function createAdmin(data) {
+async function createAdmin(data, actorUserId) {
   const adminRole = typeof data.adminRole === 'string' ? data.adminRole.trim() : '';
   if (!isValidAdminRole(adminRole)) {
     throw buildBadRequestError('A valid admin role is required.');
@@ -127,15 +128,7 @@ async function createAdmin(data) {
   let userId = null;
 
   try {
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-      email,
-      {
-        redirectTo: 'http://localhost:5173/set-password',
-        data: {
-          must_change_password: true,
-        }
-      }
-    );
+    const { data: authData, error: authError } = await sendInviteEmail(email, actorUserId);
 
     if (authError) throw authError;
     userId = authData.user.id;

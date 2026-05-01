@@ -6,13 +6,14 @@ const {
   requireAdminRole,
   requireAdminPermission,
 } = require('@middlewares/authMiddleware');
+const { createRateLimitMiddleware } = require('@middlewares/rateLimitMiddleware');
 
 const router = express.Router();
 
 router.use(requireAuth, requireRole('admin'), requireAdminPermission('admins.manage'));
 
 router.get('/', adminController.getAllAdmins);
-router.post('/', adminController.createAdmin);
+router.post('/', createRateLimitMiddleware('adminWrite'), adminController.createAdmin);
 router.patch('/:id', requireAdminRole('president'), adminController.updateAdmin);
 router.delete('/:id', requireAdminRole('president'), adminController.deleteAdmin);
 

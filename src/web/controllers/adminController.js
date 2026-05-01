@@ -24,7 +24,7 @@ async function getAllAdmins(req, res) {
 async function createAdmin(req, res) {
   try {
     const data = normalizeAdminPayload(req.body);
-    const result = await adminService.createAdmin(data);
+    const result = await adminService.createAdmin(data, req.user?.id);
     return res.status(201).json({
       message: 'Admin account created successfully. An invitation email was sent so the new admin can set their password.',
       ...result,
