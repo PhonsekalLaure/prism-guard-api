@@ -8,6 +8,7 @@ const profileRoutes = require('@routes/profileRoutes');
 const employeeRoutes = require('@routes/employeeRoutes');
 const clientRoutes = require('@routes/clientRoutes');
 const adminRoutes = require('@routes/adminRoutes');
+const googlePlacesRoutes = require('@routes/googlePlacesRoutes');
 
 const app = express();
 
@@ -28,6 +29,7 @@ app.use('/api/web/profile', profileRoutes);
 app.use('/api/web/employees', employeeRoutes);
 app.use('/api/web/clients', clientRoutes);
 app.use('/api/web/admins', adminRoutes);
+app.use('/api/web/integrations/google/places', googlePlacesRoutes);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
