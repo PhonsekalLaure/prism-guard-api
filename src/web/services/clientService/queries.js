@@ -36,6 +36,7 @@ async function getAllClients(page = 1, limit = 6, filters = null) {
       first_name,
       last_name,
       status,
+      avatar_url,
       contact_email,
       phone_number,
       clients!inner (
@@ -61,7 +62,11 @@ async function getAllClients(page = 1, limit = 6, filters = null) {
     }
   }
 
-  const { data: profiles, error, count } = await query.range(from, to);
+  const { data: profiles, error, count } = await query
+    .order('status', { ascending: true })
+    .order('first_name', { ascending: true })
+    .order('last_name', { ascending: true })
+    .range(from, to);
 
   if (error) {
     const err = new Error(error.message);
@@ -81,6 +86,7 @@ async function getAllClients(page = 1, limit = 6, filters = null) {
       phone_number: p.phone_number,
       status: p.status,
       initials: getClientInitials(client.company, p.first_name, p.last_name),
+      avatar_url: p.avatar_url || null,
       contract_status: getContractStatus(client.contract_start_date, client.contract_end_date),
       contract_url: client.contract_url || null,
       rate_per_guard: client.rate_per_guard,
@@ -103,9 +109,11 @@ async function getClientDetails(id) {
       first_name,
       middle_name,
       last_name,
+      suffix,
       contact_email,
       phone_number,
       status,
+      avatar_url,
       clients (
         id,
         company,
@@ -202,12 +210,17 @@ async function getClientDetails(id) {
 
   return {
     id: profile.id,
+    first_name: profile.first_name,
+    middle_name: profile.middle_name,
+    last_name: profile.last_name,
+    suffix: profile.suffix || '',
     company: client.company,
     contact_person: `${profile.first_name} ${profile.middle_name ? `${profile.middle_name} ` : ''}${profile.last_name}`,
     contact_email: profile.contact_email,
     phone_number: profile.phone_number,
     status: profile.status,
     initials: getClientInitials(client.company, profile.first_name, profile.last_name),
+    avatar_url: profile.avatar_url || null,
     billing_address: client.billing_address,
     contract_start_date: client.contract_start_date,
     contract_end_date: client.contract_end_date,

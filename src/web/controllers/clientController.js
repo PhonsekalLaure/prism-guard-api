@@ -110,7 +110,9 @@ async function createClient(req, res) {
     const files = req.files || [];
 
     for (const file of files) {
-      if (file.fieldname === 'contractUrl') {
+      if (file.fieldname === 'avatar') {
+        data.avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/avatars');
+      } else if (file.fieldname === 'contractUrl') {
         data.contractUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/contracts');
       }
     }
@@ -136,7 +138,9 @@ async function updateClient(req, res) {
     const files = req.files || [];
 
     for (const file of files) {
-      if (file.fieldname === 'contractUrl') {
+      if (file.fieldname === 'avatar') {
+        data.avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/avatars');
+      } else if (file.fieldname === 'contractUrl') {
         data.contractUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/contracts');
       }
     }

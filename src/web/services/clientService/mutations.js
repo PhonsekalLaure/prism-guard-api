@@ -87,6 +87,7 @@ async function createClient(data) {
         phone_number: mobile,
         role: 'client',
         status: 'active',
+        avatar_url: data.avatarUrl || null,
       }]);
 
     if (profileError) throw profileError;
@@ -195,6 +196,7 @@ async function updateClient(id, data) {
       fieldLabel: 'Mobile number',
     });
   }
+  if (data.avatarUrl !== undefined) profileUpdates.avatar_url = data.avatarUrl || null;
 
   if (Object.keys(profileUpdates).length > 0) {
     const { error: profileError } = await supabaseAdmin
