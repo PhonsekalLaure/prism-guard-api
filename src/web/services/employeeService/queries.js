@@ -335,7 +335,6 @@ async function getEmployeeStats() {
     total: statusCounts.length,
     active: statusCounts.filter((p) => p.status === 'active').length,
     inactive: statusCounts.filter((p) => p.status === 'inactive').length,
-    terminated: statusCounts.filter((p) => p.status === 'terminated').length,
   };
 
   const { data: attendanceToday, error: attendanceError } = await supabaseAdmin
@@ -350,7 +349,6 @@ async function getEmployeeStats() {
   return {
     totalEmployees: stats.total,
     inactive: stats.inactive,
-    terminated: stats.terminated,
     absentToday: stats.active - clockInCount,
     activeOnDuty: clockInCount,
   };

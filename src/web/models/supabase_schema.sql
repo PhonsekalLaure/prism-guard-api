@@ -1,5 +1,5 @@
 user_role = [admin, employee, client]
-user_status = [active, inactive, terminated]
+user_status = [active, inactive]
 
 create table public.profiles (
   id uuid not null,

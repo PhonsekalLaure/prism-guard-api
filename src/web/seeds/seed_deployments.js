@@ -431,7 +431,7 @@ async function uploadSeedAsset(cacheKey, fileName, folder) {
 
   const filePath = path.join(SEED_DIRECTORY, fileName);
   const buffer = fs.readFileSync(filePath);
-  const url = await uploadBufferToCloudinary(buffer, folder);
+  const url = await uploadBufferToCloudinary(buffer, folder, { bypassRateLimit: true });
   uploadedSeedAssetUrls.set(cacheKey, url);
   return url;
 }
