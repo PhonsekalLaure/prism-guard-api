@@ -295,8 +295,6 @@ create table if not exists public.employee_contracts (
   start_date date not null,
   end_date date null,
   document_url text null,
-  salary_at_signing numeric null,
-  rate_per_guard numeric null,
   status text null default 'active'::text,
   created_at timestamp with time zone null default now(),
   updated_at timestamp with time zone not null default timezone('utc'::text, now()),

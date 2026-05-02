@@ -93,6 +93,8 @@ async function createEmployee(req, res) {
       data[key] = typeof req.body[key] === 'string' ? req.body[key].trim() : req.body[key];
     });
 
+    await employeeService.assertEmployeeCreateAvailable(data);
+
     const files = req.files || []; // from multer
     let avatarUrl = null;
     let contractDocUrl = null;
@@ -179,11 +181,16 @@ async function updateEmployee(req, res) {
     const clearancesData = [];
     let avatarUrl = null;
     let deploymentOrderUrl = null;
+    let contractDocUrl = null;
 
     // Upload any replacement clearance documents to Cloudinary
     for (const file of files) {
       if (file.fieldname === 'avatar') {
         avatarUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/avatars', {
+          actorKey: req.user?.id,
+        });
+      } else if (file.fieldname === 'document_contract') {
+        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts', {
           actorKey: req.user?.id,
         });
       } else if (file.fieldname === 'document_deployment_order') {
@@ -199,7 +206,7 @@ async function updateEmployee(req, res) {
       }
     }
 
-    await employeeService.updateEmployee(id, data, clearancesData, avatarUrl, deploymentOrderUrl);
+    await employeeService.updateEmployee(id, data, clearancesData, avatarUrl, deploymentOrderUrl, contractDocUrl);
 
     return res.json({ message: 'Employee updated successfully' });
   } catch (err) {
@@ -226,7 +233,6 @@ async function deployEmployee(req, res) {
     const { id } = req.params;
     const {
       siteId,
-      ratePerGuard,
       baseSalary,
       contractStartDate,
       contractEndDate,
@@ -236,14 +242,15 @@ async function deployEmployee(req, res) {
     } = req.body;
     const files = req.files || [];
     let deploymentOrderUrl = null;
-    let contractDocUrl = null;
+
+    if (files.some((file) => file.fieldname === 'document_contract')) {
+      return res.status(400).json({
+        error: 'Employment contract uploads are only allowed through employee onboarding or contract renewal.',
+      });
+    }
 
     for (const file of files) {
-      if (file.fieldname === 'document_contract') {
-        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts', {
-          actorKey: req.user?.id,
-        });
-      } else if (file.fieldname === 'document_deployment_order') {
+      if (file.fieldname === 'document_deployment_order') {
         deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders', {
           actorKey: req.user?.id,
         });
@@ -256,14 +263,12 @@ async function deployEmployee(req, res) {
 
     const result = await employeeService.deployEmployee(id, {
       siteId,
-      ratePerGuard,
       baseSalary,
       contractStartDate,
       contractEndDate,
       daysOfWeek,
       shiftStart,
       shiftEnd,
-      contractDocUrl,
       deploymentOrderUrl
     });
 
@@ -280,7 +285,7 @@ async function transferEmployeeAssignment(req, res) {
     const { id } = req.params;
     const {
       siteId,
-      ratePerGuard,
+      baseSalary,
       contractStartDate,
       contractEndDate,
       daysOfWeek,
@@ -289,14 +294,15 @@ async function transferEmployeeAssignment(req, res) {
     } = req.body;
     const files = req.files || [];
     let deploymentOrderUrl = null;
-    let contractDocUrl = null;
+
+    if (files.some((file) => file.fieldname === 'document_contract')) {
+      return res.status(400).json({
+        error: 'Employment contract uploads are only allowed through employee onboarding or contract renewal.',
+      });
+    }
 
     for (const file of files) {
-      if (file.fieldname === 'document_contract') {
-        contractDocUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/contracts', {
-          actorKey: req.user?.id,
-        });
-      } else if (file.fieldname === 'document_deployment_order') {
+      if (file.fieldname === 'document_deployment_order') {
         deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders', {
           actorKey: req.user?.id,
         });
@@ -309,13 +315,12 @@ async function transferEmployeeAssignment(req, res) {
 
     const result = await employeeService.transferEmployeeAssignment(id, {
       siteId,
-      ratePerGuard,
+      baseSalary,
       contractStartDate,
       contractEndDate,
       daysOfWeek,
       shiftStart,
       shiftEnd,
-      contractDocUrl,
       deploymentOrderUrl
     });
 

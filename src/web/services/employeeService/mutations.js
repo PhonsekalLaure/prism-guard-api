@@ -7,15 +7,61 @@ const {
 } = require('./shared');
 const { sendInviteEmail } = require('@services/inviteService');
 const {
+  normalizeEmailAddress,
+  mapEmailConflictError,
+  restoreAuthEmail,
+  restoreProfileState,
+  updateAccountProfileAndAuthEmail,
+} = require('../shared/accountIdentity');
+const {
   toProperCase,
   CLEARANCE_EXPIRY_YEARS,
   normalizeDateRange,
   validateDateIsTodayOrLater,
   normalizeSchedule,
+  getTodayDateString,
   getEmployeeProfileForDeployment,
   getActiveSiteAssignment,
-  getLatestContractDocumentUrl,
+  getEmploymentContractState,
+  getActiveEmploymentContracts,
+  getValidActiveEmploymentContract,
+  closeEmploymentContracts,
 } = require('./helpers');
+
+async function assertEmployeeCreateAvailable(data) {
+  const email = normalizeEmailAddress(data.email);
+  const employeeId = typeof data.employeeId === 'string'
+    ? data.employeeId.trim()
+    : data.employeeId;
+
+  const { data: existingProfile, error: profileLookupError } = await supabaseAdmin
+    .from('profiles')
+    .select('id')
+    .eq('contact_email', email)
+    .limit(1)
+    .maybeSingle();
+
+  if (profileLookupError) throw profileLookupError;
+
+  if (existingProfile) {
+    throw buildBadRequestError('Email address is already in use.');
+  }
+
+  if (employeeId) {
+    const { data: existingEmployee, error: employeeLookupError } = await supabaseAdmin
+      .from('employees')
+      .select('id')
+      .eq('employee_id_number', employeeId)
+      .limit(1)
+      .maybeSingle();
+
+    if (employeeLookupError) throw employeeLookupError;
+
+    if (existingEmployee) {
+      throw buildBadRequestError('Employee ID is already in use.');
+    }
+  }
+}
 
 async function createEmployee(data, clearancesData, avatarUrl = null, extras = {}) {
   const firstName = toProperCase(data.firstName, 'First name');
@@ -104,10 +150,10 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
   let userId = null;
 
   try {
-    const email = data.email.trim().toLowerCase();
+    const email = normalizeEmailAddress(data.email);
     const { data: authData, error: authError } = await sendInviteEmail(email, actorUserId);
 
-    if (authError) throw authError;
+    if (authError) throw mapEmailConflictError(authError);
     userId = authData.user.id;
 
     const { error: profileError } = await supabaseAdmin
@@ -125,7 +171,7 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
         status: 'active',
       }]);
 
-    if (profileError) throw profileError;
+    if (profileError) throw mapEmailConflictError(profileError);
 
     const { error: empError } = await supabaseAdmin
       .from('employees')
@@ -203,8 +249,6 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
           contract_type: 'employment',
           start_date: contractStartDate,
           end_date: normalizedContractEndDate,
-          salary_at_signing: startingBaseSalary,
-          rate_per_guard: siteAssignment?.clients?.rate_per_guard ?? null,
           document_url: contractDocUrl || null,
           status: 'active',
         }]);
@@ -248,7 +292,171 @@ async function createEmployee(data, clearancesData, avatarUrl = null, extras = {
   }
 }
 
-async function updateEmployee(id, data, clearances = [], avatarUrl = null, deploymentOrderUrl = null) {
+async function getExistingEmployeeForUpdate(id) {
+  const { data: profile, error } = await supabaseAdmin
+    .from('profiles')
+    .select(`
+      id,
+      role,
+      first_name,
+      middle_name,
+      last_name,
+      suffix,
+      contact_email,
+      phone_number,
+      status,
+      avatar_url,
+      employees (
+        date_of_birth,
+        gender,
+        civil_status,
+        height_cm,
+        educational_level,
+        provincial_address,
+        place_of_birth,
+        blood_type,
+        badge_number,
+        license_number,
+        license_expiry_date,
+        residential_address,
+        latitude,
+        longitude,
+        emergency_contact_name,
+        emergency_contact_number,
+        emergency_contact_relationship,
+        position,
+        employment_type
+      )
+    `)
+    .eq('id', id)
+    .eq('role', 'employee')
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!profile) {
+    const err = new Error('Employee not found');
+    err.status = 404;
+    throw err;
+  }
+
+  const employee = Array.isArray(profile.employees) ? profile.employees[0] : profile.employees;
+
+  return {
+    profile,
+    employee: employee || {},
+  };
+}
+
+function buildProfileRollbackState(existingProfile) {
+  return {
+    first_name: existingProfile.first_name,
+    middle_name: existingProfile.middle_name,
+    last_name: existingProfile.last_name,
+    suffix: existingProfile.suffix,
+    contact_email: existingProfile.contact_email,
+    phone_number: existingProfile.phone_number,
+    status: existingProfile.status,
+    avatar_url: existingProfile.avatar_url,
+  };
+}
+
+function buildEmployeeRollbackState(existingEmployee) {
+  return {
+    date_of_birth: existingEmployee.date_of_birth || null,
+    gender: existingEmployee.gender || null,
+    civil_status: existingEmployee.civil_status || null,
+    height_cm: existingEmployee.height_cm ?? null,
+    educational_level: existingEmployee.educational_level || null,
+    provincial_address: existingEmployee.provincial_address || null,
+    place_of_birth: existingEmployee.place_of_birth || null,
+    blood_type: existingEmployee.blood_type || null,
+    badge_number: existingEmployee.badge_number || null,
+    license_number: existingEmployee.license_number || null,
+    license_expiry_date: existingEmployee.license_expiry_date || null,
+    residential_address: existingEmployee.residential_address || null,
+    latitude: existingEmployee.latitude ?? null,
+    longitude: existingEmployee.longitude ?? null,
+    emergency_contact_name: existingEmployee.emergency_contact_name || null,
+    emergency_contact_number: existingEmployee.emergency_contact_number || null,
+    emergency_contact_relationship: existingEmployee.emergency_contact_relationship || null,
+    position: existingEmployee.position || null,
+    employment_type: existingEmployee.employment_type || null,
+  };
+}
+
+async function renewEmploymentContract(employeeId, {
+  contractDocUrl,
+  renewalStartDate,
+  renewalEndDate,
+}) {
+  if (!contractDocUrl && renewalStartDate === undefined && renewalEndDate === undefined) {
+    return { renewed: false };
+  }
+
+  if (!contractDocUrl) {
+    throw buildBadRequestError('Employee contract renewal requires a replacement contract document.');
+  }
+
+  if (!renewalStartDate || !renewalEndDate) {
+    throw buildBadRequestError('Employee contract renewal requires both renewal start and end dates.');
+  }
+
+  const { contractStartDate, contractEndDate } = normalizeDateRange(renewalStartDate, renewalEndDate, {
+    startLabel: 'Employment contract renewal start date',
+    endLabel: 'Employment contract renewal end date',
+  });
+
+  const activeContracts = await getActiveEmploymentContracts(employeeId);
+
+  const currentContract = activeContracts?.[0] || null;
+  if (currentContract && new Date(contractStartDate) <= new Date(currentContract.start_date)) {
+    throw buildBadRequestError('Employment contract renewal start date must be later than the current contract start date.');
+  }
+
+  const contractInsert = {
+    employee_id: employeeId,
+    contract_type: 'employment',
+    start_date: contractStartDate,
+    end_date: contractEndDate,
+    document_url: contractDocUrl,
+    status: 'active',
+  };
+
+  const { data: newContract, error: newContractError } = await supabaseAdmin
+    .from('employee_contracts')
+    .insert([contractInsert])
+    .select('id')
+    .single();
+
+  if (newContractError) throw newContractError;
+
+  const previousContracts = activeContracts.filter((contract) => contract.id !== newContract.id);
+  if (previousContracts.length === 0) {
+    return { renewed: true, contractId: newContract.id };
+  }
+
+  try {
+    await closeEmploymentContracts(previousContracts, (contract) => (
+      getClosureEndDate(contract.start_date, contractStartDate)
+    ));
+  } catch (closeContractError) {
+    await supabaseAdmin.from('employee_contracts').delete().eq('id', newContract.id);
+    throw closeContractError;
+  }
+
+  return {
+    renewed: true,
+    contractId: newContract.id,
+    previousContractId: currentContract.id,
+    previousContractIds: previousContracts.map((contract) => contract.id),
+  };
+}
+
+async function updateEmployee(id, data, clearances = [], avatarUrl = null, deploymentOrderUrl = null, contractDocUrl = null) {
+  const { profile: existingProfile, employee: existingEmployee } = await getExistingEmployeeForUpdate(id);
+  const previousProfileState = buildProfileRollbackState(existingProfile);
+  const previousEmployeeState = buildEmployeeRollbackState(existingEmployee);
   const profilePatch = {};
   if (data.phone_number !== undefined) {
     profilePatch.phone_number = normalizeMobileNumber(data.phone_number, {
@@ -256,17 +464,11 @@ async function updateEmployee(id, data, clearances = [], avatarUrl = null, deplo
       fieldLabel: 'Phone number',
     });
   }
-  if (data.contact_email !== undefined) profilePatch.contact_email = data.contact_email || null;
+  if (data.contact_email !== undefined) {
+    profilePatch.contact_email = normalizeEmailAddress(data.contact_email);
+  }
   if (data.status !== undefined) profilePatch.status = data.status;
   if (avatarUrl) profilePatch.avatar_url = avatarUrl;
-
-  if (Object.keys(profilePatch).length > 0) {
-    const { error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .update(profilePatch)
-      .eq('id', id);
-    if (profileError) throw profileError;
-  }
 
   const empPatch = {};
   if (data.date_of_birth !== undefined) empPatch.date_of_birth = data.date_of_birth || null;
@@ -320,55 +522,96 @@ async function updateEmployee(id, data, clearances = [], avatarUrl = null, deplo
   }
   if (data.position !== undefined) empPatch.position = data.position || null;
   if (data.employment_type !== undefined) empPatch.employment_type = (data.employment_type || '').toLowerCase() || null;
-  if (Object.keys(empPatch).length > 0) {
-    const { error: empError } = await supabaseAdmin
-      .from('employees')
-      .update(empPatch)
-      .eq('id', id);
-    if (empError) throw empError;
-  }
 
-  if (clearances.length > 0) {
-    const today = new Date().toISOString().split('T')[0];
-    const upsertRows = clearances.map((c) => ({
-      employee_id: id,
-      clearance_type: c.type,
-      document_url: c.url,
-      issue_date: today,
-      status: 'valid',
-    }));
+  let profileUpdated = false;
+  let employeeUpdated = false;
+  let emailChanged = false;
 
-    const { error: clearError } = await supabaseAdmin
-      .from('clearances')
-      .upsert(upsertRows, { onConflict: 'employee_id,clearance_type' });
-
-    if (clearError) throw clearError;
-  }
-
-  if (deploymentOrderUrl) {
-    const { data: activeDeployment, error: deploymentError } = await supabaseAdmin
-      .from('deployments')
-      .select('id')
-      .eq('employee_id', id)
-      .eq('status', 'active')
-      .order('start_date', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (deploymentError) throw deploymentError;
-    if (!activeDeployment) {
-      throw buildBadRequestError('An active deployment is required before uploading a deployment order.');
+  try {
+    if (Object.keys(profilePatch).length > 0) {
+      const profileResult = await updateAccountProfileAndAuthEmail({
+        userId: id,
+        role: 'employee',
+        profilePatch,
+        previousProfileState,
+      });
+      profileUpdated = profileResult.profileUpdated;
+      emailChanged = profileResult.emailChanged;
     }
 
-    const { error: updateDeploymentError } = await supabaseAdmin
-      .from('deployments')
-      .update({ deployment_order_url: deploymentOrderUrl })
-      .eq('id', activeDeployment.id);
+    if (Object.keys(empPatch).length > 0) {
+      const { error: empError } = await supabaseAdmin
+        .from('employees')
+        .update(empPatch)
+        .eq('id', id);
+      if (empError) throw empError;
+      employeeUpdated = true;
+    }
 
-    if (updateDeploymentError) throw updateDeploymentError;
+    if (clearances.length > 0) {
+      const today = new Date().toISOString().split('T')[0];
+      const upsertRows = clearances.map((c) => ({
+        employee_id: id,
+        clearance_type: c.type,
+        document_url: c.url,
+        issue_date: today,
+        status: 'valid',
+      }));
+
+      const { error: clearError } = await supabaseAdmin
+        .from('clearances')
+        .upsert(upsertRows, { onConflict: 'employee_id,clearance_type' });
+
+      if (clearError) throw clearError;
+    }
+
+    if (deploymentOrderUrl) {
+      const { data: activeDeployment, error: deploymentError } = await supabaseAdmin
+        .from('deployments')
+        .select('id')
+        .eq('employee_id', id)
+        .eq('status', 'active')
+        .order('start_date', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (deploymentError) throw deploymentError;
+      if (!activeDeployment) {
+        throw buildBadRequestError('An active deployment is required before uploading a deployment order.');
+      }
+
+      const { error: updateDeploymentError } = await supabaseAdmin
+        .from('deployments')
+        .update({ deployment_order_url: deploymentOrderUrl })
+        .eq('id', activeDeployment.id);
+
+      if (updateDeploymentError) throw updateDeploymentError;
+    }
+
+    const contractRenewalResult = await renewEmploymentContract(id, {
+      contractDocUrl,
+      renewalStartDate: data.contract_start_date,
+      renewalEndDate: data.contract_end_date,
+    });
+
+    return { success: true, contractRenewalResult };
+  } catch (error) {
+    if (employeeUpdated) {
+      await supabaseAdmin
+        .from('employees')
+        .update(previousEmployeeState)
+        .eq('id', id);
+    }
+
+    if (profileUpdated) {
+      await restoreProfileState(id, 'employee', previousProfileState);
+      if (emailChanged) {
+        await restoreAuthEmail(id, previousProfileState.contact_email);
+      }
+    }
+
+    throw error;
   }
-
-  return { success: true };
 }
 
 async function getEmployeeForStatusChange(employeeId) {
@@ -416,6 +659,17 @@ async function deactivateEmployee(employeeId) {
   }
 
   const deletedAt = new Date().toISOString();
+  const deactivationDate = getTodayDateString();
+  const activeContracts = await getActiveEmploymentContracts(employeeId);
+  let closedContracts = [];
+
+  try {
+    closedContracts = await closeEmploymentContracts(activeContracts, (contract) => (
+      getEffectiveClosureDate(contract.start_date, deactivationDate)
+    ));
+  } catch (contractError) {
+    throw contractError;
+  }
 
   const { error } = await supabaseAdmin
     .from('profiles')
@@ -426,31 +680,40 @@ async function deactivateEmployee(employeeId) {
     .eq('id', employeeId)
     .eq('role', 'employee');
 
-  if (error) throw error;
+  if (error) {
+    for (const contract of closedContracts) {
+      await supabaseAdmin
+        .from('employee_contracts')
+        .update({
+          status: contract.status,
+          end_date: contract.end_date,
+        })
+        .eq('id', contract.id);
+    }
+    throw error;
+  }
 
   return {
     success: true,
     employee_id: employeeId,
     status: 'inactive',
     deleted_at: deletedAt,
+    closed_contract_ids: closedContracts.map((contract) => contract.id),
   }
 }
 
 async function deployEmployee(employeeId, {
   siteId,
-  ratePerGuard,
   baseSalary,
   contractStartDate,
   contractEndDate,
   daysOfWeek,
   shiftStart,
   shiftEnd,
-  contractDocUrl,
   deploymentOrderUrl,
 }) {
   const employeeProfile = await getEmployeeProfileForDeployment(employeeId);
   const siteAssignment = await getActiveSiteAssignment(siteId);
-  const normalizedRatePerGuard = ratePerGuard ?? siteAssignment.clients?.rate_per_guard ?? null;
   const parsedBaseSalary = baseSalary === undefined || baseSalary === null || baseSalary === ''
     ? employeeProfile.base_salary
     : Number(baseSalary);
@@ -462,14 +725,16 @@ async function deployEmployee(employeeId, {
     endLabel: 'Deployment contract end date',
   });
   const normalizedSchedule = normalizeSchedule({ daysOfWeek, shiftStart, shiftEnd });
-  const effectiveContractDocUrl = contractDocUrl || await getLatestContractDocumentUrl(employeeId);
+  const validEmploymentContract = await getValidActiveEmploymentContract(employeeId);
 
   if (parsedBaseSalary !== null && Number.isNaN(parsedBaseSalary)) {
     throw buildBadRequestError('Base salary must be a valid number.');
   }
 
-  if (!effectiveContractDocUrl) {
-    throw buildBadRequestError('Employee must have an employment contract on file before deployment.');
+  if (!validEmploymentContract) {
+    const currentContract = (await getActiveEmploymentContracts(employeeId))[0] || null;
+    const contractState = getEmploymentContractState(currentContract);
+    throw buildBadRequestError(contractState.message || 'Employee must have a valid active employment contract before deployment.');
   }
 
   const { data: existing } = await supabaseAdmin
@@ -492,31 +757,6 @@ async function deployEmployee(employeeId, {
     if (salaryUpdateError) throw salaryUpdateError;
   }
 
-  const { data: contract, error: contractError } = await supabaseAdmin
-    .from('employee_contracts')
-    .insert([{
-      employee_id: employeeId,
-      contract_type: 'employment',
-      rate_per_guard: normalizedRatePerGuard,
-      salary_at_signing: parsedBaseSalary,
-      start_date: normalizedContractStartDate,
-      end_date: normalizedContractEndDate,
-      document_url: effectiveContractDocUrl,
-      status: 'active',
-    }])
-    .select('id')
-    .single();
-
-  if (contractError) {
-    if (shouldUpdateBaseSalary) {
-      await supabaseAdmin
-        .from('employees')
-        .update({ base_salary: employeeProfile.base_salary })
-        .eq('id', employeeId);
-    }
-    throw contractError;
-  }
-
   const { data: deployment, error: depError } = await supabaseAdmin
     .from('deployments')
     .insert([{
@@ -531,10 +771,6 @@ async function deployEmployee(employeeId, {
     .single();
 
   if (depError) {
-    await supabaseAdmin
-      .from('employee_contracts')
-      .delete()
-      .eq('id', contract.id);
     if (shouldUpdateBaseSalary) {
       await supabaseAdmin
         .from('employees')
@@ -559,10 +795,6 @@ async function deployEmployee(employeeId, {
       .from('deployments')
       .delete()
       .eq('id', deployment.id);
-    await supabaseAdmin
-      .from('employee_contracts')
-      .delete()
-      .eq('id', contract.id);
     if (shouldUpdateBaseSalary) {
       await supabaseAdmin
         .from('employees')
@@ -575,10 +807,10 @@ async function deployEmployee(employeeId, {
   return {
     success: true,
     deployment_id: deployment.id,
-    contract_id: contract.id,
     schedule_id: schedule.id,
     base_salary: parsedBaseSalary,
     previous_base_salary: employeeProfile.base_salary,
+    employment_contract_id: validEmploymentContract.id,
   };
 }
 
@@ -601,18 +833,19 @@ function getClosureEndDate(currentStartDate, nextStartDate) {
 
 async function transferEmployeeAssignment(employeeId, {
   siteId,
-  ratePerGuard,
+  baseSalary,
   contractStartDate,
   contractEndDate,
   daysOfWeek,
   shiftStart,
   shiftEnd,
-  contractDocUrl,
   deploymentOrderUrl,
 }) {
   const employeeProfile = await getEmployeeProfileForDeployment(employeeId);
   const siteAssignment = await getActiveSiteAssignment(siteId);
-  const normalizedRatePerGuard = ratePerGuard ?? siteAssignment.clients?.rate_per_guard ?? null;
+  const parsedBaseSalary = baseSalary === undefined || baseSalary === null || baseSalary === ''
+    ? employeeProfile.base_salary
+    : Number(baseSalary);
   const {
     contractStartDate: normalizedContractStartDate,
     contractEndDate: normalizedContractEndDate,
@@ -621,10 +854,16 @@ async function transferEmployeeAssignment(employeeId, {
     endLabel: 'Deployment contract end date',
   });
   const normalizedSchedule = normalizeSchedule({ daysOfWeek, shiftStart, shiftEnd });
-  const effectiveContractDocUrl = contractDocUrl || await getLatestContractDocumentUrl(employeeId);
+  const validEmploymentContract = await getValidActiveEmploymentContract(employeeId);
 
-  if (!effectiveContractDocUrl) {
-    throw buildBadRequestError('Employee must have an employment contract on file before transfer.');
+  if (parsedBaseSalary !== null && Number.isNaN(parsedBaseSalary)) {
+    throw buildBadRequestError('Base salary must be a valid number.');
+  }
+
+  if (!validEmploymentContract) {
+    const currentContract = (await getActiveEmploymentContracts(employeeId))[0] || null;
+    const contractState = getEmploymentContractState(currentContract);
+    throw buildBadRequestError(contractState.message || 'Employee must have a valid active employment contract before transfer.');
   }
 
   const { data: activeDeployments, error: activeDeploymentError } = await supabaseAdmin
@@ -644,37 +883,16 @@ async function transferEmployeeAssignment(employeeId, {
     throw buildBadRequestError('Employee is already assigned to the selected site.');
   }
 
-  const { data: activeContracts, error: activeContractError } = await supabaseAdmin
-    .from('employee_contracts')
-    .select('id, start_date')
-    .eq('employee_id', employeeId)
-    .eq('status', 'active')
-    .order('start_date', { ascending: false });
-
-  if (activeContractError) throw activeContractError;
-
-  const currentContract = activeContracts?.[0] || null;
   const closureEndDate = getClosureEndDate(currentDeployment.start_date, normalizedContractStartDate);
-  const contractClosureEndDate = currentContract
-    ? getClosureEndDate(currentContract.start_date, normalizedContractStartDate)
-    : null;
+  const shouldUpdateBaseSalary = parsedBaseSalary !== employeeProfile.base_salary;
+  if (shouldUpdateBaseSalary) {
+    const { error: salaryUpdateError } = await supabaseAdmin
+      .from('employees')
+      .update({ base_salary: parsedBaseSalary })
+      .eq('id', employeeId);
 
-  const { data: newContract, error: contractError } = await supabaseAdmin
-    .from('employee_contracts')
-    .insert([{
-      employee_id: employeeId,
-      contract_type: 'employment',
-      rate_per_guard: normalizedRatePerGuard,
-      salary_at_signing: employeeProfile.base_salary,
-      start_date: normalizedContractStartDate,
-      end_date: normalizedContractEndDate,
-      document_url: effectiveContractDocUrl,
-      status: 'active',
-    }])
-    .select('id')
-    .single();
-
-  if (contractError) throw contractError;
+    if (salaryUpdateError) throw salaryUpdateError;
+  }
 
   const { data: newDeployment, error: deploymentError } = await supabaseAdmin
     .from('deployments')
@@ -690,7 +908,12 @@ async function transferEmployeeAssignment(employeeId, {
     .single();
 
   if (deploymentError) {
-    await supabaseAdmin.from('employee_contracts').delete().eq('id', newContract.id);
+    if (shouldUpdateBaseSalary) {
+      await supabaseAdmin
+        .from('employees')
+        .update({ base_salary: employeeProfile.base_salary })
+        .eq('id', employeeId);
+    }
     throw deploymentError;
   }
 
@@ -706,7 +929,12 @@ async function transferEmployeeAssignment(employeeId, {
 
   if (scheduleError) {
     await supabaseAdmin.from('deployments').delete().eq('id', newDeployment.id);
-    await supabaseAdmin.from('employee_contracts').delete().eq('id', newContract.id);
+    if (shouldUpdateBaseSalary) {
+      await supabaseAdmin
+        .from('employees')
+        .update({ base_salary: employeeProfile.base_salary })
+        .eq('id', employeeId);
+    }
     throw scheduleError;
   }
 
@@ -719,7 +947,12 @@ async function transferEmployeeAssignment(employeeId, {
   if (previousScheduleError) {
     await supabaseAdmin.from('schedules').delete().eq('id', newSchedule.id);
     await supabaseAdmin.from('deployments').delete().eq('id', newDeployment.id);
-    await supabaseAdmin.from('employee_contracts').delete().eq('id', newContract.id);
+    if (shouldUpdateBaseSalary) {
+      await supabaseAdmin
+        .from('employees')
+        .update({ base_salary: employeeProfile.base_salary })
+        .eq('id', employeeId);
+    }
     throw previousScheduleError;
   }
 
@@ -738,39 +971,22 @@ async function transferEmployeeAssignment(employeeId, {
       .eq('deployment_id', currentDeployment.id);
     await supabaseAdmin.from('schedules').delete().eq('id', newSchedule.id);
     await supabaseAdmin.from('deployments').delete().eq('id', newDeployment.id);
-    await supabaseAdmin.from('employee_contracts').delete().eq('id', newContract.id);
-    throw previousDeploymentError;
-  }
-
-  if (currentContract) {
-    const { error: previousContractError } = await supabaseAdmin
-      .from('employee_contracts')
-      .update({
-        status: 'inactive',
-        end_date: contractClosureEndDate,
-      })
-      .eq('id', currentContract.id);
-
-    if (previousContractError) {
+    if (shouldUpdateBaseSalary) {
       await supabaseAdmin
-        .from('deployments')
-        .update({ status: 'active', end_date: currentDeployment.end_date || null })
-        .eq('id', currentDeployment.id);
-      await supabaseAdmin
-        .from('schedules')
-        .update({ is_active: true })
-        .eq('deployment_id', currentDeployment.id);
-      await supabaseAdmin.from('schedules').delete().eq('id', newSchedule.id);
-      await supabaseAdmin.from('deployments').delete().eq('id', newDeployment.id);
-      await supabaseAdmin.from('employee_contracts').delete().eq('id', newContract.id);
-      throw previousContractError;
+        .from('employees')
+        .update({ base_salary: employeeProfile.base_salary })
+        .eq('id', employeeId);
     }
+    throw previousDeploymentError;
   }
 
   return {
     success: true,
     deployment_id: newDeployment.id,
     transferred_from_deployment_id: currentDeployment.id,
+    employment_contract_id: validEmploymentContract.id,
+    base_salary: parsedBaseSalary,
+    previous_base_salary: employeeProfile.base_salary,
   };
 }
 
@@ -805,20 +1021,6 @@ async function relieveEmployeeAssignment(employeeId, { reliefDate } = {}) {
 
   const currentDeployment = activeDeployments[0];
   const deploymentClosureEndDate = getEffectiveClosureDate(currentDeployment.start_date, effectiveReliefDate);
-
-  const { data: activeContracts, error: activeContractError } = await supabaseAdmin
-    .from('employee_contracts')
-    .select('id, start_date, end_date, status')
-    .eq('employee_id', employeeId)
-    .eq('status', 'active')
-    .order('start_date', { ascending: false });
-
-  if (activeContractError) throw activeContractError;
-
-  const currentContract = activeContracts?.[0] || null;
-  const contractClosureEndDate = currentContract
-    ? getEffectiveClosureDate(currentContract.start_date, effectiveReliefDate)
-    : null;
 
   const { data: activeSchedules, error: activeScheduleError } = await supabaseAdmin
     .from('schedules')
@@ -857,35 +1059,6 @@ async function relieveEmployeeAssignment(employeeId, { reliefDate } = {}) {
     throw deactivateDeploymentError;
   }
 
-  if (currentContract) {
-    const { error: deactivateContractError } = await supabaseAdmin
-      .from('employee_contracts')
-      .update({
-        status: 'inactive',
-        end_date: contractClosureEndDate,
-      })
-      .eq('id', currentContract.id);
-
-    if (deactivateContractError) {
-      await supabaseAdmin
-        .from('deployments')
-        .update({
-          status: 'active',
-          end_date: currentDeployment.end_date || null,
-        })
-        .eq('id', currentDeployment.id);
-
-      if (activeScheduleIds.length > 0) {
-        await supabaseAdmin
-          .from('schedules')
-          .update({ is_active: true })
-          .in('id', activeScheduleIds);
-      }
-
-      throw deactivateContractError;
-    }
-  }
-
   return {
     success: true,
     employee_id: employeeProfile.id,
@@ -894,6 +1067,7 @@ async function relieveEmployeeAssignment(employeeId, { reliefDate } = {}) {
 }
 
 module.exports = {
+  assertEmployeeCreateAvailable,
   createEmployee,
   updateEmployee,
   deactivateEmployee,
