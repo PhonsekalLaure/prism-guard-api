@@ -6,6 +6,12 @@ const {
 const { rollbackProvisionedUser } = require('@utils/userProvisioning');
 const { sendInviteEmail } = require('@services/inviteService');
 const {
+  normalizeEmailAddress,
+  restoreProfileState,
+  restoreAuthEmail,
+  updateAccountProfileAndAuthEmail,
+} = require('../shared/accountIdentity');
+const {
   getAdminPermissions,
   isValidAdminRole,
 } = require('@utils/adminPermissions');
@@ -121,7 +127,7 @@ async function createAdmin(data, actorUserId) {
     throw buildBadRequestError('Email address is required.');
   }
 
-  const email = data.email.trim().toLowerCase();
+  const email = normalizeEmailAddress(data.email);
   const employeeIdNumber = await getNextAdminEmployeeId();
   const position = getAdminPosition(adminRole);
   const hireDate = new Date().toISOString().split('T')[0];
@@ -210,7 +216,7 @@ async function updateAdmin(adminId, data, actorUserId) {
     throw buildBadRequestError('Email address is required.');
   }
 
-  const email = data.email.trim().toLowerCase();
+  const email = normalizeEmailAddress(data.email);
   const nextPosition = getAdminPosition(adminRole);
   const previousState = {
     first_name: existingAdmin.first_name,
@@ -237,15 +243,6 @@ async function updateAdmin(adminId, data, actorUserId) {
   let employeeUpdated = false;
 
   try {
-    const { error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .update(profilePatch)
-      .eq('id', adminId)
-      .eq('role', 'admin');
-
-    if (profileError) throw profileError;
-    profileUpdated = true;
-
     const { error: employeeError } = await supabaseAdmin
       .from('employees')
       .update({ position: nextPosition })
@@ -254,14 +251,21 @@ async function updateAdmin(adminId, data, actorUserId) {
     if (employeeError) throw employeeError;
     employeeUpdated = true;
 
-    if (email !== previousState.contact_email) {
-      const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(adminId, {
-        email,
-        email_confirm: true,
-      });
-
-      if (authError) throw authError;
-    }
+    await updateAccountProfileAndAuthEmail({
+      userId: adminId,
+      role: 'admin',
+      profilePatch,
+      previousProfileState: {
+        first_name: previousState.first_name,
+        middle_name: previousState.middle_name,
+        last_name: previousState.last_name,
+        suffix: previousState.suffix,
+        contact_email: previousState.contact_email,
+        phone_number: previousState.phone_number,
+        admin_role: previousState.admin_role,
+      },
+    });
+    profileUpdated = true;
 
     return {
       id: adminId,
@@ -277,18 +281,18 @@ async function updateAdmin(adminId, data, actorUserId) {
     }
 
     if (profileUpdated) {
-      await supabaseAdmin
-        .from('profiles')
-        .update({
-          first_name: previousState.first_name,
-          middle_name: previousState.middle_name,
-          last_name: previousState.last_name,
-          suffix: previousState.suffix,
-          contact_email: previousState.contact_email,
-          phone_number: previousState.phone_number,
-          admin_role: previousState.admin_role,
-        })
-        .eq('id', adminId);
+      await restoreProfileState(adminId, 'admin', {
+        first_name: previousState.first_name,
+        middle_name: previousState.middle_name,
+        last_name: previousState.last_name,
+        suffix: previousState.suffix,
+        contact_email: previousState.contact_email,
+        phone_number: previousState.phone_number,
+        admin_role: previousState.admin_role,
+      });
+      if (email !== previousState.contact_email) {
+        await restoreAuthEmail(adminId, previousState.contact_email);
+      }
     }
 
     throw error;

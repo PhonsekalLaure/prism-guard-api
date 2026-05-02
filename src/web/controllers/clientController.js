@@ -163,6 +163,44 @@ async function updateClient(req, res) {
   }
 }
 
+async function createClientSite(req, res) {
+  try {
+    const { id } = req.params;
+    const data = normalizeClientPayload(req.body);
+    const site = await clientService.createClientSite(id, data);
+    return res.status(201).json({ message: 'Client site created successfully', data: site });
+  } catch (err) {
+    console.error('[createClientSite Error]:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to create client site' });
+  }
+}
+
+async function updateClientSite(req, res) {
+  try {
+    const { id, siteId } = req.params;
+    const data = normalizeClientPayload(req.body);
+    const site = await clientService.updateClientSite(id, siteId, data);
+    return res.json({ message: 'Client site updated successfully', data: site });
+  } catch (err) {
+    console.error('[updateClientSite Error]:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to update client site' });
+  }
+}
+
+async function deactivateClientSite(req, res) {
+  try {
+    const { id, siteId } = req.params;
+    const site = await clientService.deactivateClientSite(id, siteId);
+    return res.json({ message: 'Client site deactivated successfully', data: site });
+  } catch (err) {
+    console.error('[deactivateClientSite Error]:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ error: err.message || 'Failed to deactivate client site' });
+  }
+}
+
 async function deactivateClient(req, res) {
   try {
     const { id } = req.params;
@@ -212,6 +250,9 @@ module.exports = {
   getAllSitesList,
   createClient,
   updateClient,
+  createClientSite,
+  updateClientSite,
+  deactivateClientSite,
   deactivateClient,
   relieveAllClientGuards
 };

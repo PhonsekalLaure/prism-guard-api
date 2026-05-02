@@ -256,10 +256,16 @@ async function getClientStats() {
 }
 
 async function getClientsList() {
-  const { data: clients, error } = await supabaseAdmin
-    .from('clients')
-    .select('id, company')
-    .order('company', { ascending: true });
+  const { data: profiles, error } = await supabaseAdmin
+    .from('profiles')
+    .select(`
+      id,
+      clients!inner (
+        company
+      )
+    `)
+    .eq('role', 'client')
+    .eq('status', 'active');
 
   if (error) {
     const err = new Error(error.message);
@@ -267,7 +273,13 @@ async function getClientsList() {
     throw err;
   }
 
-  return clients;
+  return (profiles || []).map((profile) => {
+    const client = Array.isArray(profile.clients) ? profile.clients[0] : profile.clients;
+    return {
+      id: profile.id,
+      company: client?.company || 'N/A',
+    };
+  }).sort((a, b) => a.company.localeCompare(b.company));
 }
 
 async function getAllSitesList(options = {}) {

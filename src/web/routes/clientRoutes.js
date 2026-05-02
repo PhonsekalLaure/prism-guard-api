@@ -12,6 +12,9 @@ const {
   getAllSitesList,
   createClient,
   updateClient,
+  createClientSite,
+  updateClientSite,
+  deactivateClientSite,
   deactivateClient,
   relieveAllClientGuards,
 } = require('@controllers/clientController');
@@ -52,6 +55,27 @@ router.patch(
   createRateLimitMiddleware('clientWrite'),
   uploadAny,
   updateClient
+);
+
+router.post(
+  '/:id/sites',
+  requireAdminPermission('clients.write'),
+  createRateLimitMiddleware('clientWrite'),
+  createClientSite
+);
+
+router.patch(
+  '/:id/sites/:siteId',
+  requireAdminPermission('clients.write'),
+  createRateLimitMiddleware('clientWrite'),
+  updateClientSite
+);
+
+router.post(
+  '/:id/sites/:siteId/deactivate',
+  requireAdminPermission('clients.write'),
+  createRateLimitMiddleware('clientWrite'),
+  deactivateClientSite
 );
 
 router.post(

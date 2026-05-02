@@ -2,9 +2,16 @@ const {
   supabaseAdmin,
   buildBadRequestError,
   normalizeMobileNumber,
+  normalizeAddressWithCoordinates,
   rollbackProvisionedUser,
 } = require('./shared');
 const { sendInviteEmail } = require('@services/inviteService');
+const {
+  normalizeEmailAddress,
+  restoreAuthEmail,
+  restoreProfileState,
+  updateAccountProfileAndAuthEmail,
+} = require('../shared/accountIdentity');
 const {
   toProperCase,
   normalizeClientSites,
@@ -62,7 +69,7 @@ async function createClient(data, actorUserId) {
   const createdInitialDeployments = [];
 
   try {
-    const email = data.email.trim().toLowerCase();
+    const email = normalizeEmailAddress(data.email);
     const { data: authData, error: authError } = await sendInviteEmail(email, actorUserId);
     if (authError) throw authError;
 
@@ -143,12 +150,6 @@ async function createClient(data, actorUserId) {
           .delete()
           .eq('id', deployment.deployment_id);
       }
-      if (deployment.contract_id) {
-        await supabaseAdmin
-          .from('employee_contracts')
-          .delete()
-          .eq('id', deployment.contract_id);
-      }
       if (deployment.previous_base_salary !== undefined) {
         await supabaseAdmin
           .from('employees')
@@ -164,10 +165,30 @@ async function createClient(data, actorUserId) {
   }
 }
 
-async function updateClient(id, data) {
+async function getExistingClientForUpdate(id) {
   const { data: existingClient, error: existingClientError } = await supabaseAdmin
-    .from('clients')
-    .select('contract_start_date, contract_end_date')
+    .from('profiles')
+    .select(`
+      id,
+      role,
+      first_name,
+      middle_name,
+      last_name,
+      suffix,
+      contact_email,
+      phone_number,
+      status,
+      avatar_url,
+      clients (
+        contract_start_date,
+        contract_end_date,
+        contract_url,
+        company,
+        billing_address,
+        rate_per_guard,
+        billing_type
+      )
+    `)
     .eq('id', id)
     .single();
 
@@ -176,6 +197,81 @@ async function updateClient(id, data) {
     err.status = 404;
     throw err;
   }
+
+  const clientData = Array.isArray(existingClient.clients) ? existingClient.clients[0] : existingClient.clients;
+
+  return {
+    profile: existingClient,
+    client: clientData || {},
+  };
+}
+
+function buildClientProfileRollbackState(existingProfile) {
+  return {
+    first_name: existingProfile.first_name,
+    middle_name: existingProfile.middle_name,
+    last_name: existingProfile.last_name,
+    suffix: existingProfile.suffix,
+    contact_email: existingProfile.contact_email,
+    phone_number: existingProfile.phone_number,
+    status: existingProfile.status,
+    avatar_url: existingProfile.avatar_url,
+  };
+}
+
+function normalizeClientSiteInput(site = {}, options = {}) {
+  const { labelPrefix = 'Site' } = options;
+  const siteName = (site.siteName || '').trim();
+  const normalizedAddress = normalizeAddressWithCoordinates(
+    site.siteAddress,
+    site.latitude,
+    site.longitude,
+    {
+      addressLabel: `${labelPrefix} address`,
+      requireAddress: true,
+      requireCoordinates: true,
+    }
+  );
+  const geofenceRadius = Number(site.geofenceRadius);
+
+  if (!siteName) {
+    throw buildBadRequestError(`${labelPrefix} name is required.`);
+  }
+
+  if (Number.isNaN(geofenceRadius) || geofenceRadius <= 0) {
+    throw buildBadRequestError(`${labelPrefix} geofence radius must be a positive number.`);
+  }
+
+  return {
+    site_name: siteName,
+    site_address: normalizedAddress.address,
+    latitude: normalizedAddress.latitude,
+    longitude: normalizedAddress.longitude,
+    geofence_radius_meters: Math.round(geofenceRadius),
+  };
+}
+
+async function getClientSiteOrThrow(clientId, siteId) {
+  const { data, error } = await supabaseAdmin
+    .from('client_sites')
+    .select('id, client_id, site_name, site_address, latitude, longitude, geofence_radius_meters, is_active')
+    .eq('id', siteId)
+    .eq('client_id', clientId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  if (!data) {
+    const err = new Error('Client site not found');
+    err.status = 404;
+    throw err;
+  }
+
+  return data;
+}
+
+async function updateClient(id, data) {
+  const { profile: existingProfile, client: existingClient } = await getExistingClientForUpdate(id);
 
   const profileUpdates = {};
   if (data.firstName !== undefined) profileUpdates.first_name = data.firstName ? toProperCase(data.firstName) : null;
@@ -189,16 +285,8 @@ async function updateClient(id, data) {
       fieldLabel: 'Mobile number',
     });
   }
+  if (data.email !== undefined) profileUpdates.contact_email = normalizeEmailAddress(data.email);
   if (data.avatarUrl !== undefined) profileUpdates.avatar_url = data.avatarUrl || null;
-
-  if (Object.keys(profileUpdates).length > 0) {
-    const { error: profileError } = await supabaseAdmin
-      .from('profiles')
-      .update(profileUpdates)
-      .eq('id', id);
-
-    if (profileError) throw profileError;
-  }
 
   const clientUpdates = {};
   if (data.company !== undefined) clientUpdates.company = data.company ? toProperCase(data.company) : null;
@@ -229,16 +317,150 @@ async function updateClient(id, data) {
   if (nextRatePerGuard !== undefined) clientUpdates.rate_per_guard = nextRatePerGuard;
   if (data.billingType !== undefined) clientUpdates.billing_type = data.billingType ? data.billingType.toLowerCase() : null;
 
-  if (Object.keys(clientUpdates).length > 0) {
-    const { error: clientError } = await supabaseAdmin
-      .from('clients')
-      .update(clientUpdates)
-      .eq('id', id);
+  let profileUpdated = false;
+  let emailChanged = false;
+  let clientUpdated = false;
 
-    if (clientError) throw clientError;
+  try {
+    if (Object.keys(profileUpdates).length > 0) {
+      const profileResult = await updateAccountProfileAndAuthEmail({
+        userId: id,
+        role: 'client',
+        profilePatch: profileUpdates,
+        previousProfileState: buildClientProfileRollbackState(existingProfile),
+      });
+      profileUpdated = profileResult.profileUpdated;
+      emailChanged = profileResult.emailChanged;
+    }
+
+    if (Object.keys(clientUpdates).length > 0) {
+      const { error: clientError } = await supabaseAdmin
+        .from('clients')
+        .update(clientUpdates)
+        .eq('id', id);
+
+      if (clientError) throw clientError;
+      clientUpdated = true;
+    }
+  } catch (error) {
+    if (clientUpdated) {
+      await supabaseAdmin
+        .from('clients')
+        .update({
+          company: existingClient.company || null,
+          billing_address: existingClient.billing_address || null,
+          contract_start_date: existingClient.contract_start_date || null,
+          contract_end_date: existingClient.contract_end_date || null,
+          contract_url: existingClient.contract_url || null,
+          rate_per_guard: existingClient.rate_per_guard ?? null,
+          billing_type: existingClient.billing_type || null,
+        })
+        .eq('id', id);
+    }
+
+    if (profileUpdated) {
+      await restoreProfileState(id, 'client', buildClientProfileRollbackState(existingProfile));
+      if (emailChanged) {
+        await restoreAuthEmail(id, existingProfile.contact_email);
+      }
+    }
+
+    throw error;
   }
 
   return { success: true };
+}
+
+async function createClientSite(clientId, data) {
+  const clientProfile = await getClientForStatusChange(clientId);
+  if (clientProfile.status !== 'active') {
+    throw buildBadRequestError('Inactive clients cannot add new sites.');
+  }
+
+  const normalizedSite = normalizeClientSiteInput(data, { labelPrefix: 'Site' });
+
+  const { data: site, error } = await supabaseAdmin
+    .from('client_sites')
+    .insert([{
+      client_id: clientId,
+      ...normalizedSite,
+      is_active: true,
+    }])
+    .select('id, site_name, site_address, latitude, longitude, geofence_radius_meters, is_active')
+    .single();
+
+  if (error) throw error;
+
+  return site;
+}
+
+async function updateClientSite(clientId, siteId, data) {
+  const clientProfile = await getClientForStatusChange(clientId);
+  if (clientProfile.status !== 'active') {
+    throw buildBadRequestError('Inactive clients cannot update sites.');
+  }
+
+  const existingSite = await getClientSiteOrThrow(clientId, siteId);
+  if (!existingSite.is_active) {
+    throw buildBadRequestError('Inactive sites cannot be edited.');
+  }
+
+  const normalizedSite = normalizeClientSiteInput({
+    siteName: data.siteName ?? existingSite.site_name,
+    siteAddress: data.siteAddress ?? existingSite.site_address,
+    latitude: data.latitude ?? existingSite.latitude,
+    longitude: data.longitude ?? existingSite.longitude,
+    geofenceRadius: data.geofenceRadius ?? existingSite.geofence_radius_meters,
+  }, { labelPrefix: 'Site' });
+
+  const { data: site, error } = await supabaseAdmin
+    .from('client_sites')
+    .update(normalizedSite)
+    .eq('id', siteId)
+    .eq('client_id', clientId)
+    .select('id, site_name, site_address, latitude, longitude, geofence_radius_meters, is_active')
+    .single();
+
+  if (error) throw error;
+
+  return site;
+}
+
+async function deactivateClientSite(clientId, siteId) {
+  const clientProfile = await getClientForStatusChange(clientId);
+  if (clientProfile.status !== 'active') {
+    throw buildBadRequestError('Inactive clients cannot deactivate sites.');
+  }
+
+  const site = await getClientSiteOrThrow(clientId, siteId);
+  if (!site.is_active) {
+    throw buildBadRequestError('Client site is already inactive.');
+  }
+
+  const { data: activeDeployment, error: activeDeploymentError } = await supabaseAdmin
+    .from('deployments')
+    .select('id')
+    .eq('site_id', siteId)
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle();
+
+  if (activeDeploymentError) throw activeDeploymentError;
+  if (activeDeployment?.id) {
+    throw buildBadRequestError('Relieve or transfer all active guards before deactivating this site.');
+  }
+
+  const { data: updatedSite, error } = await supabaseAdmin
+    .from('client_sites')
+    .update({ is_active: false })
+    .eq('id', siteId)
+    .eq('client_id', clientId)
+    .select('id, site_name, site_address, latitude, longitude, geofence_radius_meters, is_active')
+    .single();
+
+  if (error) throw error;
+
+  return updatedSite;
 }
 
 async function getClientForStatusChange(clientId) {
@@ -391,6 +613,9 @@ async function relieveAllClientGuards(clientId, options = {}) {
 module.exports = {
   createClient,
   updateClient,
+  createClientSite,
+  updateClientSite,
+  deactivateClientSite,
   deactivateClient,
   relieveAllClientGuards,
 };
