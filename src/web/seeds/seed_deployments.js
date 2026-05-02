@@ -15,6 +15,7 @@
  *   node src/web/seeds/seed_deployments.js
  */
 
+require('module-alias/register');
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');

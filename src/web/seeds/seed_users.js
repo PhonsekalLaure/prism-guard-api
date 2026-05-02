@@ -12,6 +12,7 @@
  *   node src/web/seeds/seed_users.js
  */
 
+require('module-alias/register');
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -53,7 +54,6 @@ const employeeSeedDetails = {
     latitude: 14.5678,
     longitude: 120.9874,
     contract_end_date: '2027-03-14',
-    contract_rate_per_guard: 26250,
   },
   'jose.delacruz@prismguard.com': {
     residential_address: '9037 Leveriza Street, Malate, Manila City',
@@ -68,7 +68,6 @@ const employeeSeedDetails = {
     latitude: 14.5609,
     longitude: 120.9966,
     contract_end_date: '2027-07-03',
-    contract_rate_per_guard: 23800,
   },
   'daniel.garcia@prismguard.com': {
     residential_address: '1543 A. Mabini Street, Ermita, Manila City',
@@ -83,7 +82,6 @@ const employeeSeedDetails = {
     latitude: 14.5822,
     longitude: 120.9798,
     contract_end_date: '2026-11-22',
-    contract_rate_per_guard: 27500,
   },
   'miguel.ramos@prismguard.com': {
     residential_address: '72 Kabihasnan Road, San Dionisio, Paranaque City',
@@ -98,7 +96,6 @@ const employeeSeedDetails = {
     latitude: 14.4872,
     longitude: 120.9968,
     contract_end_date: '2027-01-08',
-    contract_rate_per_guard: 26250,
   },
   'rafael.bautista@prismguard.com': {
     residential_address: '1146 Quirino Avenue, Paco, Manila City',
@@ -113,7 +110,6 @@ const employeeSeedDetails = {
     latitude: 14.5794,
     longitude: 120.9991,
     contract_end_date: '2027-02-11',
-    contract_rate_per_guard: 24500,
   },
   'adrian.fernandez@prismguard.com': {
     residential_address: '24 NAIA Road, Don Galo, Paranaque City',
@@ -128,7 +124,6 @@ const employeeSeedDetails = {
     latitude: 14.5073,
     longitude: 120.9937,
     contract_end_date: '2026-08-18',
-    contract_rate_per_guard: 27500,
   },
   'paolo.lim@prismguard.com': {
     residential_address: '41 Dona Soledad Avenue, Better Living, Paranaque City',
@@ -143,7 +138,6 @@ const employeeSeedDetails = {
     latitude: 14.4879,
     longitude: 121.0412,
     contract_end_date: '2027-10-10',
-    contract_rate_per_guard: 23800,
   },
   'kevin.tan@prismguard.com': {
     residential_address: '658 P. Ocampo Street, Malate, Manila City',
@@ -158,7 +152,6 @@ const employeeSeedDetails = {
     latitude: 14.5634,
     longitude: 120.9941,
     contract_end_date: '2027-06-25',
-    contract_rate_per_guard: 22800,
   },
   'james.navarro@prismguard.com': {
     residential_address: '1020 Blumentritt Road, Sampaloc, Manila City',
@@ -173,7 +166,6 @@ const employeeSeedDetails = {
     latitude: 14.6161,
     longitude: 120.9923,
     contract_end_date: '2027-04-17',
-    contract_rate_per_guard: 24500,
   },
   'carlos.aquino@prismguard.com': {
     suffix: 'Sr.',
@@ -189,7 +181,6 @@ const employeeSeedDetails = {
     latitude: 14.4945,
     longitude: 121.0187,
     contract_end_date: '2027-05-27',
-    contract_rate_per_guard: 26250,
   },
 };
 
@@ -660,7 +651,6 @@ function buildEmployeeSeed(employee, seedAssets) {
     avatar_url: details.avatar_url || seedAssets.employeeAvatarUrl,
     clearance_types: details.clearance_types || DEFAULT_CLEARANCE_TYPES,
     contract_end_date: details.contract_end_date || addYears(employee.hire_date, 1),
-    contract_rate_per_guard: details.contract_rate_per_guard ?? null,
   };
 }
 
@@ -703,8 +693,6 @@ async function insertEmployeeArtifacts(id, employeeData, seedAssets) {
     start_date: employeeData.hire_date,
     end_date: employeeData.contract_end_date,
     document_url: seedAssets.employeeDocumentUrl,
-    salary_at_signing: employeeData.base_salary,
-    rate_per_guard: employeeData.contract_rate_per_guard,
     status: 'active',
   });
 
