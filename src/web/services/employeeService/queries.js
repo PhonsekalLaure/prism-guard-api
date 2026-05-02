@@ -3,6 +3,11 @@ const {
   getPaginationRange,
   applySupabaseFilters,
 } = require('./shared');
+const {
+  getCanonicalEmploymentContract,
+  getEmploymentContractState,
+  getValidActiveEmploymentContract,
+} = require('./helpers');
 
 const TALL_GUARD_MIN_HEIGHT_CM = 170;
 const EXPERIENCED_GUARD_MIN_YEARS = 2;
@@ -34,6 +39,20 @@ function calculateDistanceKm(fromLat, fromLng, toLat, toLng) {
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return earthRadiusKm * c;
+}
+
+function buildEmploymentContractStatus(contract, employeeStatus = 'active') {
+  const state = getEmploymentContractState(contract);
+  const canActOnContract = employeeStatus === 'active';
+  const shouldRequireAdminAction = canActOnContract && state.needsRenewal;
+
+  return {
+    employment_contract_status: state.status,
+    employment_contract_valid: state.isValid,
+    employment_contract_needs_renewal: shouldRequireAdminAction,
+    admin_action_required: shouldRequireAdminAction,
+    admin_action_message: shouldRequireAdminAction ? state.message : null,
+  };
 }
 
 async function getAllEmployees(page = 1, limit = 6, filters = null) {
@@ -85,8 +104,16 @@ async function getAllEmployees(page = 1, limit = 6, filters = null) {
   }
 
   const profileData = profiles || [];
+  const contractRows = profileData.length > 0
+    ? await Promise.all(profileData.map((p) => getCanonicalEmploymentContract(p.id)))
+    : [];
+  const contractByEmployeeId = new Map(
+    profileData.map((profile, index) => [profile.id, contractRows[index]])
+  );
+
   const formatted = profileData.map((p) => {
     const emp = Array.isArray(p.employees) ? p.employees[0] : (p.employees || {});
+    const contractStatus = buildEmploymentContractStatus(contractByEmployeeId.get(p.id), p.status);
 
     let deployments = [];
     if (Array.isArray(emp.deployments)) {
@@ -121,6 +148,7 @@ async function getAllEmployees(page = 1, limit = 6, filters = null) {
       active_client_id: activeDeployment?.client_sites?.client_id || null,
       client: companyName,
       tenure,
+      ...contractStatus,
     };
   });
 
@@ -247,20 +275,8 @@ async function getEmployeeDetails(id) {
   const clearances = Array.isArray(emp.clearances) ? emp.clearances : (emp.clearances ? [emp.clearances] : []);
   const payroll = Array.isArray(emp.payroll_records) ? emp.payroll_records : (emp.payroll_records ? [emp.payroll_records] : []);
 
-  const { data: latestContract, error: contractError } = await supabaseAdmin
-    .from('employee_contracts')
-    .select('document_url, start_date, end_date, updated_at')
-    .eq('employee_id', id)
-    .order('updated_at', { ascending: false })
-    .order('start_date', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (contractError) {
-    const err = new Error(contractError.message);
-    err.status = 500;
-    throw err;
-  }
+  const currentContract = await getCanonicalEmploymentContract(id);
+  const contractStatus = buildEmploymentContractStatus(currentContract, profile.status);
 
   payroll.sort((a, b) => new Date(b.period_end) - new Date(a.period_end));
 
@@ -316,8 +332,12 @@ async function getEmployeeDetails(id) {
     clearances,
     payroll_records: payroll,
     deployments,
+    current_contract_id: currentContract?.id || null,
+    current_contract_start_date: currentContract?.start_date || null,
+    current_contract_end_date: currentContract?.end_date || null,
+    ...contractStatus,
     deployment_order_url: latestDeployment?.deployment_order_url || null,
-    document_url: latestContract?.document_url || null,
+    document_url: currentContract?.document_url || null,
   };
 }
 
@@ -396,6 +416,12 @@ async function getDeployableEmployees(options = {}) {
   }
 
   const profiles = data || [];
+  const validContractRows = profiles.length > 0
+    ? await Promise.all(profiles.map((profile) => getValidActiveEmploymentContract(profile.id)))
+    : [];
+  const validContractByEmployeeId = new Map(
+    profiles.map((profile, index) => [profile.id, validContractRows[index]])
+  );
 
   return profiles
     .filter((profile) => {
@@ -404,7 +430,8 @@ async function getDeployableEmployees(options = {}) {
         ? employee.deployments
         : (employee?.deployments ? [employee.deployments] : []);
 
-      return !deployments.some((deployment) => deployment.status === 'active');
+      return Boolean(validContractByEmployeeId.get(profile.id))
+        && !deployments.some((deployment) => deployment.status === 'active');
     })
     .map((profile) => {
       const employee = Array.isArray(profile.employees) ? profile.employees[0] : profile.employees;
@@ -427,6 +454,7 @@ async function getDeployableEmployees(options = {}) {
         years_experience: Number(yearsExperience.toFixed(1)),
         distance_km: distanceKm == null ? null : Number(distanceKm.toFixed(2)),
         base_salary: employee?.base_salary ?? null,
+        employment_contract_id: validContractByEmployeeId.get(profile.id)?.id || null,
       };
     })
     .filter((employee) => {

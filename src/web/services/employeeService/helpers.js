@@ -23,6 +23,8 @@ const CLEARANCE_EXPIRY_YEARS = {
   resume: null,
 };
 
+const EMPLOYMENT_CONTRACT_EXPIRY_WARNING_DAYS = 30;
+
 function normalizeDateOnly(value, fieldLabel) {
   if (!value) return null;
 
@@ -32,6 +34,21 @@ function normalizeDateOnly(value, fieldLabel) {
   }
 
   return value;
+}
+
+function getTodayDateString() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function compareDateOnly(left, right) {
+  if (!left || !right) return 0;
+  return String(left).localeCompare(String(right));
+}
+
+function addDaysToDateString(dateString, days) {
+  const date = new Date(dateString);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split('T')[0];
 }
 
 function normalizeDateRange(startDate, endDate, options = {}) {
@@ -163,11 +180,7 @@ async function getActiveSiteAssignment(siteId) {
       id,
       site_name,
       is_active,
-      client_id,
-      clients (
-        company,
-        rate_per_guard
-      )
+      client_id
     `)
     .eq('id', siteId)
     .single();
@@ -186,13 +199,19 @@ async function getActiveSiteAssignment(siteId) {
 }
 
 async function getLatestContractDocumentUrl(employeeId) {
+  const canonicalContract = await getCanonicalEmploymentContract(employeeId);
+  if (canonicalContract?.document_url) {
+    return canonicalContract.document_url;
+  }
+
   const { data, error } = await supabaseAdmin
     .from('employee_contracts')
     .select('document_url, updated_at, start_date')
     .eq('employee_id', employeeId)
+    .eq('contract_type', 'employment')
     .not('document_url', 'is', null)
-    .order('updated_at', { ascending: false })
     .order('start_date', { ascending: false })
+    .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -201,13 +220,173 @@ async function getLatestContractDocumentUrl(employeeId) {
   return data?.document_url || null;
 }
 
+function sortEmploymentContractsByCurrentPriority(contracts = []) {
+  return [...contracts].sort((a, b) => {
+    if (a.status !== b.status) {
+      return a.status === 'active' ? -1 : 1;
+    }
+
+    const aStart = a.start_date ? new Date(a.start_date).getTime() : 0;
+    const bStart = b.start_date ? new Date(b.start_date).getTime() : 0;
+    if (aStart !== bStart) return bStart - aStart;
+
+    const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+    if (aCreated !== bCreated) return bCreated - aCreated;
+
+    const aUpdated = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+    const bUpdated = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+    return bUpdated - aUpdated;
+  });
+}
+
+async function getEmploymentContracts(employeeId, { status = null } = {}) {
+  let query = supabaseAdmin
+    .from('employee_contracts')
+    .select('id, contract_type, start_date, end_date, document_url, status, created_at, updated_at')
+    .eq('employee_id', employeeId)
+    .eq('contract_type', 'employment')
+    .order('start_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .order('updated_at', { ascending: false });
+
+  if (status) {
+    query = query.eq('status', status);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  return data || [];
+}
+
+async function getActiveEmploymentContracts(employeeId) {
+  return getEmploymentContracts(employeeId, { status: 'active' });
+}
+
+async function getCanonicalEmploymentContract(employeeId) {
+  const contracts = await getEmploymentContracts(employeeId);
+  return sortEmploymentContractsByCurrentPriority(contracts)[0] || null;
+}
+
+function getEmploymentContractState(contract, today = getTodayDateString()) {
+  if (!contract) {
+    return {
+      status: 'missing',
+      isValid: false,
+      needsRenewal: true,
+      message: 'No employment contract is on file. Upload a signed employment contract before deployment.',
+    };
+  }
+
+  if (contract.status !== 'active') {
+    return {
+      status: 'inactive',
+      isValid: false,
+      needsRenewal: true,
+      message: 'Employment contract is inactive. Renew the contract before deployment.',
+    };
+  }
+
+  if (contract.start_date && compareDateOnly(contract.start_date, today) > 0) {
+    return {
+      status: 'future',
+      isValid: false,
+      needsRenewal: false,
+      message: 'Employment contract is not effective yet.',
+    };
+  }
+
+  if (contract.end_date && compareDateOnly(contract.end_date, today) < 0) {
+    return {
+      status: 'expired',
+      isValid: false,
+      needsRenewal: true,
+      message: 'Employment contract has expired. Renew the contract before deployment.',
+    };
+  }
+
+  const warningDate = addDaysToDateString(today, EMPLOYMENT_CONTRACT_EXPIRY_WARNING_DAYS);
+  if (contract.end_date && compareDateOnly(contract.end_date, warningDate) <= 0) {
+    return {
+      status: 'expiring_soon',
+      isValid: true,
+      needsRenewal: true,
+      message: `Employment contract expires on ${contract.end_date}. Renew the contract before it ends.`,
+    };
+  }
+
+  return {
+    status: 'valid',
+    isValid: true,
+    needsRenewal: false,
+    message: null,
+  };
+}
+
+async function getValidActiveEmploymentContract(employeeId) {
+  const activeContracts = await getActiveEmploymentContracts(employeeId);
+  return activeContracts.find((contract) => getEmploymentContractState(contract).isValid) || null;
+}
+
+async function closeEmploymentContracts(contracts = [], resolveEndDate) {
+  const closedContracts = [];
+
+  for (const contract of contracts) {
+    const endDate = typeof resolveEndDate === 'function'
+      ? resolveEndDate(contract)
+      : resolveEndDate;
+
+    const { error } = await supabaseAdmin
+      .from('employee_contracts')
+      .update({
+        status: 'inactive',
+        end_date: endDate,
+      })
+      .eq('id', contract.id);
+
+    if (error) {
+      await restoreEmploymentContracts(closedContracts);
+      throw error;
+    }
+
+    closedContracts.push({
+      id: contract.id,
+      status: contract.status,
+      end_date: contract.end_date,
+    });
+  }
+
+  return closedContracts;
+}
+
+async function restoreEmploymentContracts(contracts = []) {
+  for (const contract of contracts) {
+    await supabaseAdmin
+      .from('employee_contracts')
+      .update({
+        status: contract.status,
+        end_date: contract.end_date,
+      })
+      .eq('id', contract.id);
+  }
+}
+
 module.exports = {
   toProperCase,
   CLEARANCE_EXPIRY_YEARS,
   normalizeDateRange,
+  getTodayDateString,
+  getEmploymentContractState,
   validateDateIsTodayOrLater,
   normalizeSchedule,
   getEmployeeProfileForDeployment,
   getActiveSiteAssignment,
   getLatestContractDocumentUrl,
+  getEmploymentContracts,
+  getActiveEmploymentContracts,
+  getCanonicalEmploymentContract,
+  getValidActiveEmploymentContract,
+  closeEmploymentContracts,
+  restoreEmploymentContracts,
 };
