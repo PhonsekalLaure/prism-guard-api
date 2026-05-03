@@ -3,9 +3,26 @@ const {
   normalizeAddressWithCoordinates,
 } = require('./shared');
 
+const CLIENT_CONTRACT_EXPIRY_WARNING_DAYS = 30;
+
 function toProperCase(str) {
   if (!str) return str;
   return str.toLowerCase().replace(/\b\w/g, (s) => s.toUpperCase());
+}
+
+function getTodayDateString() {
+  return new Date().toISOString().split('T')[0];
+}
+
+function compareDateOnly(left, right) {
+  if (!left || !right) return 0;
+  return String(left).localeCompare(String(right));
+}
+
+function addDaysToDateString(dateString, days) {
+  const date = new Date(dateString);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split('T')[0];
 }
 
 function getContractStatus(contractStartDate, contractEndDate) {
@@ -26,6 +43,52 @@ function getContractStatus(contractStartDate, contractEndDate) {
   }
 
   return 'Active';
+}
+
+function getClientContractState(contractStartDate, contractEndDate, today = getTodayDateString()) {
+  if (!contractStartDate || !contractEndDate) {
+    return {
+      status: 'missing',
+      isValid: false,
+      needsRenewal: true,
+      message: 'No service contract dates are on file. Set contract dates before proceeding.',
+    };
+  }
+
+  if (compareDateOnly(contractStartDate, today) > 0) {
+    return {
+      status: 'upcoming',
+      isValid: false,
+      needsRenewal: false,
+      message: 'Service contract is not effective yet.',
+    };
+  }
+
+  if (compareDateOnly(contractEndDate, today) < 0) {
+    return {
+      status: 'expired',
+      isValid: false,
+      needsRenewal: true,
+      message: 'Service contract has expired. Renew the contract to continue operations.',
+    };
+  }
+
+  const warningDate = addDaysToDateString(today, CLIENT_CONTRACT_EXPIRY_WARNING_DAYS);
+  if (compareDateOnly(contractEndDate, warningDate) <= 0) {
+    return {
+      status: 'expiring_soon',
+      isValid: true,
+      needsRenewal: true,
+      message: `Service contract expires on ${contractEndDate}. Renew the contract before it ends.`,
+    };
+  }
+
+  return {
+    status: 'valid',
+    isValid: true,
+    needsRenewal: false,
+    message: null,
+  };
 }
 
 function getClientInitials(company, firstName, lastName) {
@@ -96,6 +159,7 @@ function normalizeClientSites(rawSites) {
 module.exports = {
   toProperCase,
   getContractStatus,
+  getClientContractState,
   getClientInitials,
   normalizeClientSites,
 };
