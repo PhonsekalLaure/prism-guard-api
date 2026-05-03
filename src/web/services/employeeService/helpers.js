@@ -198,28 +198,6 @@ async function getActiveSiteAssignment(siteId) {
   return data;
 }
 
-async function getLatestContractDocumentUrl(employeeId) {
-  const canonicalContract = await getCanonicalEmploymentContract(employeeId);
-  if (canonicalContract?.document_url) {
-    return canonicalContract.document_url;
-  }
-
-  const { data, error } = await supabaseAdmin
-    .from('employee_contracts')
-    .select('document_url, updated_at, start_date')
-    .eq('employee_id', employeeId)
-    .eq('contract_type', 'employment')
-    .not('document_url', 'is', null)
-    .order('start_date', { ascending: false })
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw error;
-
-  return data?.document_url || null;
-}
-
 function sortEmploymentContractsByCurrentPriority(contracts = []) {
   return [...contracts].sort((a, b) => {
     if (a.status !== b.status) {
@@ -382,11 +360,8 @@ module.exports = {
   normalizeSchedule,
   getEmployeeProfileForDeployment,
   getActiveSiteAssignment,
-  getLatestContractDocumentUrl,
-  getEmploymentContracts,
   getActiveEmploymentContracts,
   getCanonicalEmploymentContract,
   getValidActiveEmploymentContract,
   closeEmploymentContracts,
-  restoreEmploymentContracts,
 };

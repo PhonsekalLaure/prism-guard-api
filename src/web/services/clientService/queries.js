@@ -4,6 +4,7 @@ const {
 } = require('./shared');
 const {
   getContractStatus,
+  getClientContractState,
   getClientInitials,
 } = require('./helpers');
 
@@ -77,6 +78,9 @@ async function getAllClients(page = 1, limit = 6, filters = null) {
   const profileData = profiles || [];
   const formatted = profileData.map((p) => {
     const client = Array.isArray(p.clients) ? p.clients[0] : (p.clients || {});
+    const contractState = getClientContractState(client.contract_start_date, client.contract_end_date);
+    const canActOnContract = p.status === 'active';
+    const shouldRequireAdminAction = canActOnContract && contractState.needsRenewal;
 
     return {
       id: p.id,
@@ -92,6 +96,9 @@ async function getAllClients(page = 1, limit = 6, filters = null) {
       rate_per_guard: client.rate_per_guard,
       billing_type: client.billing_type,
       guard_count: 0,
+      contract_needs_renewal: shouldRequireAdminAction,
+      admin_action_required: shouldRequireAdminAction,
+      admin_action_message: shouldRequireAdminAction ? contractState.message : null,
     };
   });
 
@@ -180,11 +187,23 @@ async function getClientDetails(id) {
   const siteIds = sites.map((site) => site.id);
   let guardCount = 0;
   const activeGuardCountsBySite = new Map();
+  const activeGuardDetailsBySite = new Map();
+  const allDeployedGuards = [];
 
   if (siteIds.length > 0) {
     const { data: deployments, error: deploymentsError } = await supabaseAdmin
       .from('deployments')
-      .select('id, site_id')
+      .select(`
+        id,
+        site_id,
+        employee_id,
+        start_date,
+        status,
+        employees!deployments_employee_id_fkey (
+          employee_id_number,
+          position
+        )
+      `)
       .in('site_id', siteIds)
       .eq('status', 'active');
 
@@ -194,19 +213,72 @@ async function getClientDetails(id) {
       throw err;
     }
 
-    guardCount = deployments?.length || 0;
-    for (const deployment of deployments || []) {
+    const activeDeployments = deployments || [];
+    guardCount = activeDeployments.length;
+
+    // Fetch guard profile info (name, avatar) for all deployed employees
+    const employeeIds = [...new Set(activeDeployments.map((d) => d.employee_id))];
+    const guardProfileMap = new Map();
+
+    if (employeeIds.length > 0) {
+      const { data: guardProfiles, error: guardProfilesError } = await supabaseAdmin
+        .from('profiles')
+        .select('id, first_name, last_name, avatar_url, status')
+        .in('id', employeeIds);
+
+      if (!guardProfilesError && guardProfiles) {
+        for (const gp of guardProfiles) {
+          guardProfileMap.set(gp.id, gp);
+        }
+      }
+    }
+
+    // Build site name lookup
+    const siteNameMap = new Map();
+    for (const site of sites) {
+      siteNameMap.set(site.id, site.site_name);
+    }
+
+    for (const deployment of activeDeployments) {
+      const emp = Array.isArray(deployment.employees) ? deployment.employees[0] : (deployment.employees || {});
+      const guardProfile = guardProfileMap.get(deployment.employee_id) || {};
+
+      const guardDetail = {
+        deployment_id: deployment.id,
+        employee_id: deployment.employee_id,
+        name: `${guardProfile.first_name || ''} ${guardProfile.last_name || ''}`.trim() || 'Unknown',
+        employee_id_number: emp.employee_id_number || 'N/A',
+        position: emp.position || 'N/A',
+        avatar_url: guardProfile.avatar_url || null,
+        guard_status: guardProfile.status || 'unknown',
+        site_id: deployment.site_id,
+        site_name: siteNameMap.get(deployment.site_id) || 'Unknown',
+        start_date: deployment.start_date,
+      };
+
+      allDeployedGuards.push(guardDetail);
+
       activeGuardCountsBySite.set(
         deployment.site_id,
         (activeGuardCountsBySite.get(deployment.site_id) || 0) + 1
       );
+
+      if (!activeGuardDetailsBySite.has(deployment.site_id)) {
+        activeGuardDetailsBySite.set(deployment.site_id, []);
+      }
+      activeGuardDetailsBySite.get(deployment.site_id).push(guardDetail);
     }
   }
 
   const enrichedSites = sites.map((site) => ({
     ...site,
     active_guard_count: activeGuardCountsBySite.get(site.id) || 0,
+    deployed_guards: activeGuardDetailsBySite.get(site.id) || [],
   }));
+
+  const contractState = getClientContractState(client.contract_start_date, client.contract_end_date);
+  const canActOnContract = profile.status === 'active';
+  const shouldRequireAdminAction = canActOnContract && contractState.needsRenewal;
 
   return {
     id: profile.id,
@@ -229,6 +301,10 @@ async function getClientDetails(id) {
     rate_per_guard: client.rate_per_guard,
     billing_type: client.billing_type,
     guard_count: guardCount,
+    deployed_guards: allDeployedGuards,
+    contract_needs_renewal: shouldRequireAdminAction,
+    admin_action_required: shouldRequireAdminAction,
+    admin_action_message: shouldRequireAdminAction ? contractState.message : null,
     sites: enrichedSites,
     billings,
     service_tickets: serviceTickets,
