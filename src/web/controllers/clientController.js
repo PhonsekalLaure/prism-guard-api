@@ -108,6 +108,7 @@ async function createClient(req, res) {
 
     const data = normalizeClientPayload(req.body);
     const files = req.files || [];
+    const deploymentOrderUrlsByEmployeeId = new Map();
 
     for (const file of files) {
       if (file.fieldname === 'avatar') {
@@ -118,10 +119,25 @@ async function createClient(req, res) {
         data.contractUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/clients/contracts', {
           actorKey: req.user?.id,
         });
+      } else if (file.fieldname.startsWith('deployment_order_')) {
+        const employeeId = file.fieldname.replace('deployment_order_', '');
+        const deploymentOrderUrl = await uploadBufferToCloudinary(file.buffer, 'prism_guard/employees/deployment_orders', {
+          actorKey: req.user?.id,
+        });
+        deploymentOrderUrlsByEmployeeId.set(employeeId, deploymentOrderUrl);
       }
     }
 
-    // Call service to create user in DB
+    if (data.initialDeployment?.assignments?.length > 0) {
+      data.initialDeployment = {
+        ...data.initialDeployment,
+        assignments: data.initialDeployment.assignments.map((assignment) => ({
+          ...assignment,
+          deploymentOrderUrl: deploymentOrderUrlsByEmployeeId.get(assignment.employeeId) || null,
+        })),
+      };
+    }
+
     const { userId } = await clientService.createClient(data, req.user?.id);
 
     return res.status(201).json({ message: 'Client created and invited successfully', userId });

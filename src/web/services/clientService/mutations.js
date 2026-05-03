@@ -41,6 +41,7 @@ async function createClient(data, actorUserId) {
         daysOfWeek: initialDeployment.daysOfWeek,
         shiftStart: initialDeployment.shiftStart,
         shiftEnd: initialDeployment.shiftEnd,
+        deploymentOrderUrl: initialDeployment.deploymentOrderUrl,
       }))
       : []);
 
@@ -125,6 +126,10 @@ async function createClient(data, actorUserId) {
       }
 
       for (const assignment of deploymentAssignments) {
+        if (!assignment.deploymentOrderUrl) {
+          throw buildBadRequestError('Initial deployment requires a deployment order for each selected guard.');
+        }
+
         const deploymentResult = await employeeService.deployEmployee(assignment.employeeId, {
           siteId: createdSites[siteIndex].id,
           baseSalary: assignment.baseSalary,
@@ -133,6 +138,7 @@ async function createClient(data, actorUserId) {
           daysOfWeek: assignment.daysOfWeek,
           shiftStart: assignment.shiftStart,
           shiftEnd: assignment.shiftEnd,
+          deploymentOrderUrl: assignment.deploymentOrderUrl,
         });
         createdInitialDeployments.push({
           employeeId: assignment.employeeId,
